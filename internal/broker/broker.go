@@ -44,16 +44,22 @@ type Config struct {
 	DefaultReplicationFactor int16
 
 	// Liveness timings.
-	HeartbeatInterval  time.Duration // broker -> controller
-	SessionTimeout     time.Duration // controller fences a broker after this
-	ReplicaLagTime     time.Duration // follower dropped from ISR after this
-	ReplicaFetchWait   time.Duration // follower long-poll wait
-	FlushInterval      time.Duration // periodic fsync + HW checkpoint
-	RetentionCheck     time.Duration
-	RaftElectionMin    time.Duration
-	RaftHeartbeat      time.Duration
-	GroupInitialDelay  time.Duration // wait for more members before the first assignment
-	OffsetsPartitions  int32         // partitions of __consumer_offsets
+	HeartbeatInterval time.Duration // broker -> controller
+	SessionTimeout    time.Duration // controller fences a broker after this
+	ReplicaLagTime    time.Duration // follower dropped from ISR after this
+	ReplicaFetchWait  time.Duration // follower long-poll wait
+	FlushInterval     time.Duration // periodic fsync + HW checkpoint
+	RetentionCheck    time.Duration
+	RaftElectionMin   time.Duration
+	RaftHeartbeat     time.Duration
+	GroupInitialDelay time.Duration // wait for more members before the first assignment
+	OffsetsPartitions int32         // partitions of __consumer_offsets
+	// PreferredLeaderInterval: how often the controller moves leadership
+	// back to preferred replicas (0 = default 30s, negative = disabled).
+	PreferredLeaderInterval time.Duration
+	// MaxMessageBytes caps one record's key+value size (default 1 MiB);
+	// topic config max.message.bytes overrides it.
+	MaxMessageBytes    int
 	OffsetsReplication int16
 
 	Faults *transport.Faults // fault injection (tests only)
@@ -96,6 +102,12 @@ func (c *Config) setDefaults() {
 	}
 	if c.GroupInitialDelay == 0 {
 		c.GroupInitialDelay = 300 * time.Millisecond
+	}
+	if c.PreferredLeaderInterval == 0 {
+		c.PreferredLeaderInterval = 30 * time.Second
+	}
+	if c.MaxMessageBytes == 0 {
+		c.MaxMessageBytes = 1 << 20
 	}
 	if c.OffsetsPartitions == 0 {
 		c.OffsetsPartitions = 8
@@ -241,8 +253,30 @@ func (b *Broker) Partition(topic string, id int32) *Partition {
 	return b.replicas.get(topic, id)
 }
 
-// Close shuts the broker down gracefully.
+// Close shuts the broker down gracefully: in cluster mode it first asks
+// the controller to move its leaderships elsewhere (controlled shutdown).
 func (b *Broker) Close() error {
+	if b.raft != nil && b.initDoneClosed() {
+		b.controlledShutdown()
+	}
+	return b.shutdown()
+}
+
+// Kill stops the broker abruptly, like a crash: no controlled shutdown,
+// peers only find out through missed heartbeats. (In-process we cannot
+// drop the OS page cache, so data already written is still on disk.)
+func (b *Broker) Kill() error { return b.shutdown() }
+
+func (b *Broker) initDoneClosed() bool {
+	select {
+	case <-b.initDone:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *Broker) shutdown() error {
 	b.closeOnce.Do(func() {
 		b.cancel()
 		if b.server != nil {

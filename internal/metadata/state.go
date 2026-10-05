@@ -96,6 +96,7 @@ const (
 	CmdAlterISR         CommandType = "alter_isr"
 	CmdAllocateProducer CommandType = "allocate_producer_id"
 	CmdNoop             CommandType = "noop"
+	CmdElectLeader      CommandType = "elect_leader"
 )
 
 // Command is the unit of change in the metadata log (JSON encoded: easy
@@ -295,6 +296,27 @@ func (s *Store) applyLocked(c Command) Result {
 			}
 		}
 		p.ISR = sortedUnique(c.ISR)
+		p.PartitionEpoch++
+		return Result{}
+
+	case CmdElectLeader:
+		// Voluntary leader change (preferred-leader rebalancing). Only an
+		// unfenced ISR member may be elected, so no committed data is lost:
+		// every ISR member has every record below the high-watermark.
+		t, ok := st.Topics[c.Topic]
+		if !ok || int(c.Partition) >= len(t.Partitions) {
+			return fail(protocol.ErrUnknownTopicOrPartition, "%s-%d", c.Topic, c.Partition)
+		}
+		p := t.Partitions[c.Partition]
+		b, ok := st.Brokers[c.BrokerID]
+		if !ok || b.Fenced || !slices.Contains(p.ISR, c.BrokerID) {
+			return fail(protocol.ErrInvalidRequest, "broker %d is not a live ISR member", c.BrokerID)
+		}
+		if p.Leader == c.BrokerID {
+			return Result{}
+		}
+		p.Leader = c.BrokerID
+		p.LeaderEpoch++
 		p.PartitionEpoch++
 		return Result{}
 

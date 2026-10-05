@@ -774,12 +774,21 @@ func (m *OffsetForLeaderEpochResponse) Decode(d *Decoder) {
 type BrokerHeartbeatRequest struct {
 	BrokerID int32
 	Addr     string
+	// ShuttingDown asks the controller to fence this broker now, moving
+	// its partition leadership away before it stops (controlled shutdown).
+	ShuttingDown bool
 }
 
-func (m *BrokerHeartbeatRequest) Encode(e *Encoder) { e.Int32(m.BrokerID); e.String(m.Addr) }
+func (m *BrokerHeartbeatRequest) Encode(e *Encoder) {
+	e.Int32(m.BrokerID)
+	e.String(m.Addr)
+	e.Bool(m.ShuttingDown)
+}
+
 func (m *BrokerHeartbeatRequest) Decode(d *Decoder) {
 	m.BrokerID = d.Int32()
 	m.Addr = d.String()
+	m.ShuttingDown = d.Bool()
 }
 
 type BrokerHeartbeatResponse struct {

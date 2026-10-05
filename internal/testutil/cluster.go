@@ -37,6 +37,8 @@ func FastTimings(c *broker.Config) {
 	c.RaftElectionMin = 300 * time.Millisecond
 	c.RaftHeartbeat = 50 * time.Millisecond
 	c.GroupInitialDelay = 200 * time.Millisecond
+	c.PreferredLeaderInterval = -1 // tests that need it enable it explicitly
+	c.RetentionCheck = 200 * time.Millisecond
 }
 
 func freePort(t testing.TB) string {
@@ -184,10 +186,14 @@ func (c *Cluster) Stop(id int32) {
 	}
 }
 
-// Kill is Stop: in-process we cannot SIGKILL, but Close does not run any
-// extra handover logic (no controlled shutdown), so peers observe the
-// same thing as a crash: connections drop and heartbeats stop.
-func (c *Cluster) Kill(id int32) { c.Stop(id) }
+// Kill stops a broker abruptly (no controlled shutdown): peers only learn
+// about it from missed heartbeats, exactly as after a crash.
+func (c *Cluster) Kill(id int32) {
+	if b, ok := c.Brokers[id]; ok {
+		b.Kill()
+		delete(c.Brokers, id)
+	}
+}
 
 // Start (re)starts a stopped broker with its original config and data dir.
 func (c *Cluster) Start(id int32) *broker.Broker {

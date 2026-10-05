@@ -3,7 +3,9 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,6 +79,9 @@ func (b *Broker) startRaft() error {
 	b.controller = newController(b)
 	b.goLoop(b.cfg.HeartbeatInterval, b.controller.tick)
 	b.goLoop(b.cfg.HeartbeatInterval, b.sendHeartbeat)
+	if b.cfg.PreferredLeaderInterval > 0 {
+		b.goLoop(b.cfg.PreferredLeaderInterval, b.controller.preferredLeaderTick)
+	}
 	return nil
 }
 
@@ -161,6 +166,16 @@ func (c *controller) onHeartbeat(ctx context.Context, req *protocol.BrokerHeartb
 	b := c.b
 	if !b.proposer.IsLeader() {
 		return &protocol.BrokerHeartbeatResponse{Err: protocol.ErrNotController, ControllerID: b.proposer.LeaderID()}
+	}
+	if req.ShuttingDown {
+		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		res, err := b.proposer.Propose(pctx, metadata.Command{Type: metadata.CmdFenceBroker, BrokerID: req.BrokerID})
+		if err != nil {
+			return &protocol.BrokerHeartbeatResponse{Err: protocol.ErrNotController, ControllerID: b.proposer.LeaderID()}
+		}
+		b.logger.Info("controlled shutdown: broker fenced", "broker_id", req.BrokerID)
+		return &protocol.BrokerHeartbeatResponse{Err: res.Err, ControllerID: b.cfg.ID, Fenced: true}
 	}
 	c.mu.Lock()
 	c.lastSeen[req.BrokerID] = time.Now()
@@ -249,4 +264,71 @@ func (c *controller) onAlterISR(ctx context.Context, req *protocol.AlterISRReque
 		return &protocol.SimpleResponse{Err: protocol.ErrNotController, ErrMsg: err.Error()}
 	}
 	return &protocol.SimpleResponse{Err: res.Err, ErrMsg: res.Msg}
+}
+
+// preferredLeaderTick moves leadership back to each partition's preferred
+// replica (Replicas[0]) when it is alive and in the ISR. Without this, a
+// broker that restarts after a failure never leads anything again and the
+// load concentrates on the survivors.
+func (c *controller) preferredLeaderTick() {
+	b := c.b
+	if !b.proposer.IsLeader() || !b.metadataReady() {
+		return
+	}
+	c.mu.Lock()
+	active := c.active
+	c.mu.Unlock()
+	if !active || !c.proposing.CompareAndSwap(false, true) {
+		return
+	}
+	defer c.proposing.Store(false)
+	moved := 0
+	for _, t := range b.meta.Topics() {
+		for _, p := range t.Partitions {
+			pref := p.Replicas[0]
+			if p.Leader == pref || !slices.Contains(p.ISR, pref) {
+				continue
+			}
+			if bm, ok := b.meta.Broker(pref); !ok || bm.Fenced {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+			res, err := b.proposer.Propose(ctx, metadata.Command{Type: metadata.CmdElectLeader, Topic: t.Name, Partition: p.ID, BrokerID: pref})
+			cancel()
+			if err != nil {
+				return
+			}
+			if res.Err == protocol.ErrNone {
+				moved++
+				b.logger.Info("preferred leader elected", "partition", fmt.Sprintf("%s-%d", t.Name, p.ID), "from", p.Leader, "to", pref)
+			}
+			if moved >= 20 { // small steps: avoid moving everything at once
+				return
+			}
+		}
+	}
+}
+
+// controlledShutdown asks the controller to fence this broker so leaders
+// move to other ISR members right away instead of after SessionTimeout.
+// Best effort: if it fails, the normal session timeout still applies.
+func (b *Broker) controlledShutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req := &protocol.BrokerHeartbeatRequest{BrokerID: b.cfg.ID, Addr: b.addr, ShuttingDown: true}
+	for ctx.Err() == nil {
+		leader := b.proposer.LeaderID()
+		if leader == b.cfg.ID {
+			if resp := b.controller.onHeartbeat(ctx, req); resp.Err == protocol.ErrNone {
+				return
+			}
+		} else if addr, ok := b.brokerAddr(leader); ok {
+			var resp protocol.BrokerHeartbeatResponse
+			if err := b.pool.Call(ctx, addr, protocol.APIBrokerHeartbeat, req, &resp); err == nil && resp.Err == protocol.ErrNone {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	b.logger.Warn("controlled shutdown did not complete; peers will notice via session timeout")
 }

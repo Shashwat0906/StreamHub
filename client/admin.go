@@ -194,3 +194,12 @@ func (c *Client) RawProduce(ctx context.Context, addr string, req *protocol.Prod
 	}
 	return resp.Err.AsError(resp.ErrMsg)
 }
+
+// RawProduceOffset is RawProduce that also returns the base offset.
+func (c *Client) RawProduceOffset(ctx context.Context, addr string, req *protocol.ProduceRequest) (int64, error) {
+	var resp protocol.ProduceResponse
+	if err := c.call(ctx, addr, protocol.APIProduce, req, &resp); err != nil {
+		return -1, err
+	}
+	return resp.BaseOffset, resp.Err.AsError(resp.ErrMsg)
+}

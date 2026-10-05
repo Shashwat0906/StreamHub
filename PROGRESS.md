@@ -9,7 +9,7 @@ Only results that were actually run are reported here.
 | 2 — Cluster metadata (Raft) | done |
 | 3 — Replication | done |
 | 4 — Consumer groups | done |
-| 5 — Idempotence, retention, metrics, hardening | not started |
+| 5 — Idempotence, retention, metrics, hardening | done |
 | 6 — Benchmarks & docs | not started |
 
 ## How to run (current state)
@@ -200,3 +200,48 @@ Bugs found and fixed in this phase:
 3. My first version of the crash test passed without checking anything
    (its wait condition was already true); rewritten so it requires the
    survivor to re-read the uncommitted range.
+
+## Phase 5 — idempotence, retention, metrics, hardening (done)
+
+Done:
+* Idempotent producer end to end: producer IDs allocated through the Raft
+  log (never reused), per-partition sequence numbers, broker de-duplicates
+  retries (returns the original offset), rejects gaps
+  (OUT_OF_ORDER_SEQUENCE). State is rebuilt from `producerId/sequence`
+  stored in every record, so it survives restarts and leader failover. On a
+  permanently failed batch the client switches to a new producer ID.
+* Retention by size and time per topic (`retention.bytes`, `retention.ms`,
+  `segment.bytes`), never deleting the active segment or data above the
+  high-watermark; followers reset to the leader's log start when retention
+  removed what they need.
+* `max.message.bytes` (default 1 MiB) → MESSAGE_TOO_LARGE.
+* Preferred-leader rebalancing: the controller moves leadership back to
+  `Replicas[0]` when it is alive and in the ISR (load balancing after
+  failures).
+* Controlled shutdown: a graceful stop fences the broker first so leaders
+  move immediately; `Kill` stays abrupt for crash tests.
+* Observability: Prometheus `/metrics` (request counts by API and error,
+  latency histograms, records in, fetch bytes, ISR shrinks/expands, fencings,
+  rebalances, per-partition LEO/HW/size/ISR size/under-replicated,
+  is_controller, leader count), `/healthz`, `/readyz` (503 when fenced),
+  JSON `slog` logs.
+* Fuzz tests for the record decoder and every request decoder.
+
+Tests run (`go test -race`, full suite 3× in a row, all passing):
+* sequence-check unit tests (in order, exact retry, suffix retry, gap,
+  overlap, evicted window), state rebuilt from a log.
+* integration: retry deduplicated + gap rejected + non-idempotent retry
+  duplicated (log content asserted exactly); dedupe after **leader
+  failover** (retry against the new leader returns the original offset, 2
+  records not 4); dedupe after restart; retention by size on all three
+  replicas (one run: log start moved to 864 of 1000) and consumer reset to
+  earliest; retention by time keeps the active segment; follower down while
+  leader deleted segments → resets to leader log start and catches up to
+  820; message too large; preferred leader restored after its broker
+  restarts; `/metrics` contains the expected series, `/healthz` JSON,
+  `/readyz` → 503 for an isolated broker and back to 200 after healing;
+  controlled shutdown (one run: leadership already moved when the graceful
+  stop returned, with a 10 s session timeout).
+* Fuzzing: `FuzzDecodeRecord` ~438k execs / 20 s, `FuzzDecodeRequests`
+  ~325k execs / 20 s, no crashes (bounded runs, not exhaustive).
+

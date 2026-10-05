@@ -121,6 +121,16 @@ func (b *Broker) produce(ctx context.Context, req *protocol.ProduceRequest) *pro
 	if code != protocol.ErrNone {
 		return &protocol.ProduceResponse{Err: code}
 	}
+	maxMsg := b.cfg.MaxMessageBytes
+	if t, ok := b.meta.Topic(req.Topic); ok {
+		maxMsg = int(t.ConfigInt64("max.message.bytes", int64(maxMsg)))
+	}
+	for i := range req.Records {
+		if n := len(req.Records[i].Key) + len(req.Records[i].Value); n > maxMsg {
+			return &protocol.ProduceResponse{Err: protocol.ErrMessageTooLarge, BaseOffset: -1,
+				ErrMsg: fmt.Sprintf("record %d is %d bytes, max.message.bytes is %d", i, n, maxMsg)}
+		}
+	}
 	if b.isFenced() {
 		// A broker that cannot reach the controller may already have been
 		// replaced as leader. Refusing writes avoids acknowledging data on
@@ -286,6 +296,7 @@ const OffsetsTopic = "__consumer_offsets"
 
 var validTopicConfigs = map[string]bool{
 	"retention.ms": true, "retention.bytes": true, "segment.bytes": true, "min.insync.replicas": true,
+	"max.message.bytes": true,
 }
 
 func (b *Broker) handleCreateTopic(ctx context.Context, req *protocol.CreateTopicRequest) protocol.Message {

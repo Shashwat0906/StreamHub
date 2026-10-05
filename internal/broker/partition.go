@@ -412,3 +412,8 @@ func (p *Partition) ReadAll() ([]storage.Record, error) {
 		off = recs[len(recs)-1].Offset + 1
 	}
 }
+
+// LogSize, LogStartOffset and LogEndOffset expose log state (tests, tools).
+func (p *Partition) LogSize() int64        { return p.log.Size() }
+func (p *Partition) LogStartOffset() int64 { return p.log.StartOffset() }
+func (p *Partition) LogEndOffset() int64   { return p.log.EndOffset() }

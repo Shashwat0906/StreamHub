@@ -130,3 +130,19 @@ func TestDeterministicReplay(t *testing.T) {
 		}
 	}
 }
+
+func TestElectLeaderOnlyFromLiveISR(t *testing.T) {
+	s := setup(t)
+	// Shrink ISR to {1,2}: 3 is not eligible.
+	apply(t, s, Command{Type: CmdAlterISR, BrokerID: 1, Topic: "t", Partition: 0, LeaderEpoch: 0, ISR: []int32{1, 2}})
+	if r := apply(t, s, Command{Type: CmdElectLeader, Topic: "t", Partition: 0, BrokerID: 3}); r.Err == protocol.ErrNone {
+		t.Fatal("elected a replica outside the ISR")
+	}
+	if r := apply(t, s, Command{Type: CmdElectLeader, Topic: "t", Partition: 0, BrokerID: 2}); r.Err != protocol.ErrNone {
+		t.Fatal(r.Msg)
+	}
+	p, _ := s.Partition("t", 0)
+	if p.Leader != 2 || p.LeaderEpoch != 1 {
+		t.Fatalf("after elect: %+v", p)
+	}
+}
