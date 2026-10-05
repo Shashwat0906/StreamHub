@@ -455,3 +455,45 @@ func BenchmarkRead(b *testing.B) {
 	}
 	b.SetBytes(bytesRead / int64(b.N))
 }
+
+// Regression test: a read whose byte budget runs out inside one segment
+// must not continue in the next segment (that skipped records). Found by
+// a 3M-record end-to-end run where the consumer saw only ~20% of offsets.
+func TestReadAcrossSegmentsWithByteBudgetNeverSkips(t *testing.T) {
+	l, _ := Open(t.TempDir(), smallCfg(), nil) // 1 KiB segments
+	defer l.Close()
+	for b := 0; b < 40; b++ {
+		l.Append(mkRecs(5, fmt.Sprintf("b%d", b), 0))
+	}
+	if l.SegmentCount() < 5 {
+		t.Fatalf("need several segments, have %d", l.SegmentCount())
+	}
+	for _, budget := range []int{50, 100, 333, 700, 1500, 4000} {
+		next := int64(0)
+		for next < l.EndOffset() {
+			recs, err := l.Read(next, -1, budget)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(recs) == 0 {
+				t.Fatalf("budget %d: empty read at %d", budget, next)
+			}
+			for _, r := range recs {
+				if r.Offset != next {
+					t.Fatalf("budget %d: expected offset %d, got %d (skipped records)", budget, next, r.Offset)
+				}
+				next++
+			}
+		}
+	}
+}
+
+func TestAppendReplicatedRejectsGaps(t *testing.T) {
+	l, _ := Open(t.TempDir(), smallCfg(), nil)
+	defer l.Close()
+	recs := mkRecs(3, "g", 0)
+	recs[0].Offset, recs[1].Offset, recs[2].Offset = 0, 1, 5
+	if err := l.AppendReplicated(recs); !errors.Is(err, ErrNonSequential) {
+		t.Fatalf("gap accepted: %v", err)
+	}
+}

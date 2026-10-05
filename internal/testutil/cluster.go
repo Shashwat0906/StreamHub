@@ -253,3 +253,33 @@ func Ctx(t testing.TB, d time.Duration) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
+
+// AppendGarbage appends n bytes of a partial record to the newest segment
+// in a partition log directory, simulating a torn write during a crash.
+func AppendGarbage(dir string, n int) error {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	var newest string
+	for _, e := range ents {
+		if filepath.Ext(e.Name()) == ".log" && e.Name() > newest {
+			newest = e.Name()
+		}
+	}
+	if newest == "" {
+		return fmt.Errorf("no segment in %s", dir)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, newest), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	garbage := make([]byte, n)
+	garbage[3] = 200 // plausible length prefix, then the "crash"
+	for i := 4; i < n; i++ {
+		garbage[i] = byte(i * 7)
+	}
+	_, err = f.Write(garbage)
+	return err
+}

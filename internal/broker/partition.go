@@ -36,6 +36,8 @@ type followerState struct {
 	leo              int64     // follower's log end offset (from its last fetch); -1 = unknown
 	lastCaughtUpTime time.Time // last time the follower had everything the leader had
 	lastFetchTime    time.Time
+	// leader LEO at the time of the previous fetch; see updateFollowerLocked.
+	lastFetchLeaderLEO int64
 }
 
 // Partition is this broker's replica of one partition.
@@ -362,11 +364,20 @@ func (p *Partition) updateFollowerLocked(replicaID int32, fetchOffset int64) {
 		return // not a replica of this partition
 	}
 	now := time.Now()
+	leaderLEO := p.log.EndOffset()
+	// "Caught up" (Kafka's rule): either the follower has everything we
+	// have right now, or it has everything we had when it fetched last
+	// time. The second case matters under constant load, where a healthy
+	// follower is always a few records behind the live end of the log.
+	switch {
+	case fetchOffset >= leaderLEO:
+		f.lastCaughtUpTime = now
+	case fetchOffset >= f.lastFetchLeaderLEO && !f.lastFetchTime.IsZero():
+		f.lastCaughtUpTime = f.lastFetchTime
+	}
 	f.leo = fetchOffset
 	f.lastFetchTime = now
-	if fetchOffset >= p.log.EndOffset() {
-		f.lastCaughtUpTime = now
-	}
+	f.lastFetchLeaderLEO = leaderLEO
 	p.maybeAdvanceHWLocked()
 }
 
@@ -375,3 +386,20 @@ func (p *Partition) close() error { return p.log.Close() }
 
 // Dir returns the on-disk directory of this replica's log.
 func (p *Partition) Dir() string { return p.log.Dir() }
+
+// ReadAll returns every record in the local log (tests and tooling).
+func (p *Partition) ReadAll() ([]storage.Record, error) {
+	var out []storage.Record
+	off := p.log.StartOffset()
+	for {
+		recs, err := p.log.Read(off, -1, 4<<20)
+		if err != nil {
+			return out, err
+		}
+		if len(recs) == 0 {
+			return out, nil
+		}
+		out = append(out, recs...)
+		off = recs[len(recs)-1].Offset + 1
+	}
+}

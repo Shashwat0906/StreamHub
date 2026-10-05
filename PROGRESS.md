@@ -7,7 +7,7 @@ Only results that were actually run are reported here.
 | 0 — Plan | done |
 | 1 — Single-node broker | done |
 | 2 — Cluster metadata (Raft) | done |
-| 3 — Replication | not started |
+| 3 — Replication | done |
 | 4 — Consumer groups | not started |
 | 5 — Idempotence, retention, metrics, hardening | not started |
 | 6 — Benchmarks & docs | not started |
@@ -104,5 +104,51 @@ Known limitation found: follower metadata is eventually consistent, so a
 client may briefly not see a just-created topic on some brokers (clients
 retry; tests poll).
 
-Not done yet: replication of partition data (RF>1 topics have followers in
-metadata but they do not fetch yet), consumer groups.
+## Phase 3 — replication (done)
+
+Done:
+* Follower fetchers: one goroutine per leader broker, multi-partition
+  long-poll Fetch with the follower's replica ID and leader epoch.
+* High-watermark = min LEO over the (maximal) ISR; consumers read only
+  below it; follower HW = min(leader HW, own LEO); HW checkpointed.
+* ISR shrink (follower not caught up within `replica.lag.time`) and expand
+  (follower reached HW and the current leader epoch) via `AlterISR` to the
+  controller, fenced by leader epoch. Kafka's "caught up" rule (compare to
+  the leader LEO at the previous fetch) so busy followers are not dropped.
+* acks: 0 (no response), 1 (leader append), all (HW passes the batch and
+  `|ISR| >= min.insync.replicas`, else `NOT_ENOUGH_REPLICAS`).
+* Leader-epoch truncation: a replica that becomes follower calls
+  `OffsetForLeaderEpoch` and cuts its divergent tail (KIP-101/279 rule).
+* Followers reset to the leader's log start if retention deleted what they need.
+
+Tests run (`go test -race`, all passing; integration suite run 3× in a row):
+* all replicas byte-identical (offset, epoch, value) after 500 acks=all
+  records; ISR shrinks when a follower dies, acks=all continues with 2/3,
+  follower restarts, catches up and rejoins; `NOT_ENOUGH_REPLICAS` when
+  ISR < min.insync while acks=1 still succeeds.
+* **Kill leader mid-produce** (in-process): one run logged
+  `acked=412 stored=412 lost=0 duplicates=0 old_leader=3 new_leader=1`.
+* **Network partition isolating the leader**: acks=all to the isolated
+  leader was never acknowledged; it accepted 20 acks=1 writes before
+  self-fencing, and after healing it truncated them (0 survived), all
+  acks=all records present, replicas identical.
+* Rolling restart of all 3 brokers while producing: 390/390 records, ISR
+  back to 3 after each restart.
+* Crash during write on a follower (torn record appended to its segment):
+  recovery cut it, the follower re-replicated, 150/150 records in order.
+
+Real-process test (3 OS processes via `scripts/cluster.sh`): leader
+`SIGKILL`ed 1 s into producing 3,000,000 records (acks=all, idempotent):
+producer reported 0 failures; consuming afterwards returned 3,000,000
+records, 3,000,000 unique, 0 missing; restarted broker caught up
+(LEO = HW = 3,000,000 on all three).
+
+**Bug found by that run and fixed**: `Log.Read` continued into the next
+segment when a segment stopped early because of the byte budget, skipping
+records (the consumer saw ~600k of 3M offsets). Followers read through the
+same path and `AppendReplicated` only checked that offsets increase, so a
+follower could store a log with holes. Fixed both (read stops at the
+segment; replicated batches must be contiguous) and added regression tests
+that fail on the old code.
+
+Not done yet: consumer groups.

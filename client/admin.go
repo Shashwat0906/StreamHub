@@ -165,3 +165,16 @@ func (c *Client) ListOffsets(ctx context.Context, topic string, partition int32,
 	})
 	return off, err
 }
+
+// RawProduce sends one ProduceRequest to a specific broker address with no
+// routing or retries. It exists for tools and failure tests.
+func (c *Client) RawProduce(ctx context.Context, addr string, req *protocol.ProduceRequest) error {
+	if req.Acks == protocol.AcksNone {
+		return c.call(ctx, addr, protocol.APIProduce, req, nil)
+	}
+	var resp protocol.ProduceResponse
+	if err := c.call(ctx, addr, protocol.APIProduce, req, &resp); err != nil {
+		return err
+	}
+	return resp.Err.AsError(resp.ErrMsg)
+}

@@ -10,6 +10,12 @@ import (
 // dispatchExtra handles APIs added in later phases.
 func (b *Broker) dispatchExtra(ctx context.Context, h protocol.RequestHeader, body []byte) protocol.Message {
 	switch h.API {
+	case protocol.APIOffsetForLeaderEpoch:
+		req, err := decode[protocol.OffsetForLeaderEpochRequest](body)
+		if err != nil {
+			return &protocol.OffsetForLeaderEpochResponse{Err: protocol.ErrInvalidRequest}
+		}
+		return b.handleOffsetForLeaderEpoch(req)
 	case protocol.APIInitProducerID:
 		return b.handleInitProducerID(ctx)
 	case protocol.APIRaftVote:

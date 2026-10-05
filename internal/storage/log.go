@@ -219,9 +219,12 @@ func (l *Log) AppendReplicated(recs []Record) error {
 	if recs[0].Offset != l.endOffsetLocked() {
 		return fmt.Errorf("%w: got %d, log end %d", ErrNonSequential, recs[0].Offset, l.endOffsetLocked())
 	}
+	// Leaders assign contiguous offsets (no compaction in StreamHub), so a
+	// replicated batch must be contiguous too. A gap means a bug upstream;
+	// refusing it keeps a follower from silently storing a log with holes.
 	for i := 1; i < len(recs); i++ {
-		if recs[i].Offset <= recs[i-1].Offset {
-			return fmt.Errorf("%w: offsets not increasing", ErrNonSequential)
+		if recs[i].Offset != recs[i-1].Offset+1 {
+			return fmt.Errorf("%w: offset %d follows %d", ErrNonSequential, recs[i].Offset, recs[i-1].Offset)
 		}
 	}
 	return l.appendLocked(recs)
@@ -298,7 +301,8 @@ func (l *Log) Read(offset, maxOffset int64, maxBytes int) ([]Record, error) {
 	var out []Record
 	remaining := maxBytes
 	for ; i < len(l.segments) && offset < maxOffset; i++ {
-		recs, n, err := l.segments[i].read(offset, maxOffset, remaining)
+		seg := l.segments[i]
+		recs, n, err := seg.read(offset, maxOffset, remaining)
 		if err != nil {
 			return out, err
 		}
@@ -306,9 +310,12 @@ func (l *Log) Read(offset, maxOffset int64, maxBytes int) ([]Record, error) {
 			out = append(out, recs...)
 			offset = recs[len(recs)-1].Offset + 1
 			remaining -= n
-			if remaining <= 0 {
-				break
-			}
+		}
+		// Only move on to the next segment if this one was fully consumed.
+		// If it stopped early (byte budget), continuing would silently skip
+		// the rest of this segment.
+		if remaining <= 0 || offset < seg.nextOffset {
+			break
 		}
 	}
 	return out, nil
