@@ -176,6 +176,9 @@ func (rm *ReplicaManager) reconcile() {
 			rm.fetchers.remove(p)
 		}
 		p.wakeWaiters() // unblock acks=all waiters / long polls on role change
+		if key.topic == OffsetsTopic {
+			rm.b.groups.onLeadershipChange(p, newRole == roleLeader, pm.LeaderEpoch)
+		}
 	}
 }
 

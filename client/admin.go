@@ -78,28 +78,44 @@ func (c *Client) CreateTopic(ctx context.Context, spec TopicSpec) error {
 	return c.waitForLeaders(ctx, spec.Name)
 }
 
+// waitForLeaders waits until every broker's metadata shows the topic with
+// a leader for every partition. Metadata reaches brokers by replaying the
+// Raft log, so a follower can lag the controller for a moment; waiting for
+// all of them means the next command (on any broker) sees the topic.
 func (c *Client) waitForLeaders(ctx context.Context, topic string) error {
 	for attempt := 0; ; attempt++ {
-		if err := c.RefreshMetadata(ctx); err == nil {
-			c.mu.RLock()
-			t, ok := c.topics[topic]
-			c.mu.RUnlock()
-			if ok {
-				ready := true
-				for _, p := range t.Partitions {
-					if p.Leader < 0 {
-						ready = false
-					}
-				}
-				if ready {
-					return nil
-				}
-			}
+		if c.allBrokersSee(ctx, topic) {
+			return c.RefreshMetadata(ctx)
 		}
 		if err := sleepCtx(ctx, backoff(attempt)); err != nil {
-			return errors.New("client: topic created but leaders not visible yet")
+			return errors.New("client: topic created but not yet visible on every broker")
 		}
 	}
+}
+
+func (c *Client) allBrokersSee(ctx context.Context, topic string) bool {
+	if err := c.RefreshMetadata(ctx); err != nil {
+		return false
+	}
+	brokers := c.Brokers()
+	if len(brokers) == 0 {
+		return false
+	}
+	for _, b := range brokers {
+		var resp protocol.MetadataResponse
+		if err := c.call(ctx, b.Addr, protocol.APIMetadata, &protocol.MetadataRequest{Topics: []string{topic}}, &resp); err != nil {
+			continue // an unreachable broker cannot serve the topic anyway
+		}
+		if len(resp.Topics) != 1 || resp.Topics[0].Err != protocol.ErrNone {
+			return false
+		}
+		for _, p := range resp.Topics[0].Partitions {
+			if p.Leader < 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // DeleteTopic deletes a topic via the controller.

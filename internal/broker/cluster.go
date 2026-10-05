@@ -16,6 +16,50 @@ func (b *Broker) dispatchExtra(ctx context.Context, h protocol.RequestHeader, bo
 			return &protocol.OffsetForLeaderEpochResponse{Err: protocol.ErrInvalidRequest}
 		}
 		return b.handleOffsetForLeaderEpoch(req)
+	case protocol.APIFindCoordinator:
+		req, err := decode[protocol.FindCoordinatorRequest](body)
+		if err != nil {
+			return &protocol.FindCoordinatorResponse{Err: protocol.ErrInvalidRequest}
+		}
+		return b.handleFindCoordinator(ctx, req)
+	case protocol.APIJoinGroup:
+		req, err := decode[protocol.JoinGroupRequest](body)
+		if err != nil {
+			return &protocol.JoinGroupResponse{Err: protocol.ErrInvalidRequest}
+		}
+		return b.groups.join(ctx, req)
+	case protocol.APIHeartbeat:
+		req, err := decode[protocol.HeartbeatRequest](body)
+		if err != nil {
+			return badRequest(err)
+		}
+		return b.groups.heartbeat(req)
+	case protocol.APILeaveGroup:
+		req, err := decode[protocol.LeaveGroupRequest](body)
+		if err != nil {
+			return badRequest(err)
+		}
+		return b.groups.leave(req)
+	case protocol.APIOffsetCommit:
+		req, err := decode[protocol.OffsetCommitRequest](body)
+		if err != nil {
+			return badRequest(err)
+		}
+		return b.groups.commit(ctx, req)
+	case protocol.APIOffsetFetch:
+		req, err := decode[protocol.OffsetFetchRequest](body)
+		if err != nil {
+			return &protocol.OffsetFetchResponse{Err: protocol.ErrInvalidRequest}
+		}
+		return b.groups.fetchOffsets(req)
+	case protocol.APIListGroups:
+		return b.groups.listGroups()
+	case protocol.APIDescribeGroup:
+		req, err := decode[protocol.DescribeGroupRequest](body)
+		if err != nil {
+			return &protocol.DescribeGroupResponse{Err: protocol.ErrInvalidRequest}
+		}
+		return b.groups.describe(req)
 	case protocol.APIInitProducerID:
 		return b.handleInitProducerID(ctx)
 	case protocol.APIRaftVote:

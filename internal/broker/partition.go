@@ -236,15 +236,24 @@ func (p *Partition) appendAsLeader(req *protocol.ProduceRequest, minISR int) (ba
 
 // waitForHW blocks until HW >= target (acks=all), leadership is lost, or
 // ctx expires.
-func (p *Partition) waitForHW(ctx context.Context, target int64, epoch int32) protocol.ErrorCode {
+//
+// The min.insync.replicas check is repeated once the HW is reached: if the
+// ISR shrank while we waited, the HW may have advanced over fewer replicas
+// than required, so the write is NOT durable enough to acknowledge as
+// acks=all (Kafka: NOT_ENOUGH_REPLICAS_AFTER_APPEND). Found by a flaky
+// test that saw an acks=all write succeed with ISR=1.
+func (p *Partition) waitForHW(ctx context.Context, target int64, epoch int32, minISR int) protocol.ErrorCode {
 	ch := make(chan struct{}, 1)
 	p.addWaiter(ch)
 	defer p.removeWaiter(ch)
 	for {
 		p.mu.Lock()
-		hw, r, e := p.hw, p.role, p.leaderEpoch
+		hw, r, e, isr := p.hw, p.role, p.leaderEpoch, len(p.isr)
 		p.mu.Unlock()
 		if hw >= target {
+			if isr < minISR {
+				return protocol.ErrNotEnoughReplicasAfter
+			}
 			return protocol.ErrNone
 		}
 		if r != roleLeader || e != epoch {

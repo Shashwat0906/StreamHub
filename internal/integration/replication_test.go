@@ -204,8 +204,11 @@ func TestNotEnoughReplicas(t *testing.T) {
 	defer pAll.Close()
 	d := pAll.SendSync(ctx, client.Message{Topic: "nem", Value: []byte("x")})
 	var pe *protocol.Error
-	if !errors.As(d.Err, &pe) || pe.Code != protocol.ErrNotEnoughReplicas {
-		t.Fatalf("acks=all with ISR=1: got %v, want NOT_ENOUGH_REPLICAS", d.Err)
+	// Either code is correct: NOT_ENOUGH_REPLICAS if the leader already saw
+	// the shrunk ISR before appending, ..._AFTER_APPEND if the ISR shrank
+	// while the write waited for the high-watermark.
+	if !errors.As(d.Err, &pe) || (pe.Code != protocol.ErrNotEnoughReplicas && pe.Code != protocol.ErrNotEnoughReplicasAfter) {
+		t.Fatalf("acks=all with ISR=1: got %v, want NOT_ENOUGH_REPLICAS(_AFTER_APPEND)", d.Err)
 	}
 	// acks=1 is accepted (and is exactly the mode that can lose data).
 	p1, _ := c.NewProducer(client.ProducerConfig{Acks: protocol.AcksLeader, AcksSet: true})

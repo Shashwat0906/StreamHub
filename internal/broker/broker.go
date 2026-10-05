@@ -129,6 +129,7 @@ type Broker struct {
 	lastHeartbeatOK atomic.Int64 // unix nanos of the last good controller heartbeat
 
 	replicas *ReplicaManager
+	groups   *coordinator
 	metrics  *brokerMetrics
 	httpAddr string
 
@@ -180,6 +181,9 @@ func New(cfg Config) (*Broker, error) {
 		b.Close()
 		return nil, err
 	}
+
+	b.groups = newCoordinator(b)
+	b.goLoop(100*time.Millisecond, b.groups.tick)
 
 	rm, err := newReplicaManager(b)
 	if err != nil {

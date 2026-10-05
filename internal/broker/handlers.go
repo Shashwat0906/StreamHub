@@ -127,7 +127,8 @@ func (b *Broker) produce(ctx context.Context, req *protocol.ProduceRequest) *pro
 		// a partition that has moved on (split brain).
 		return &protocol.ProduceResponse{Err: protocol.ErrNotLeader, ErrMsg: "broker lost contact with controller"}
 	}
-	base, end, epoch, code, msg := p.appendAsLeader(req, b.minISRFor(req.Topic))
+	minISR := b.minISRFor(req.Topic)
+	base, end, epoch, code, msg := p.appendAsLeader(req, minISR)
 	b.metrics.recordsIn.Add(float64(len(req.Records)))
 	if code != protocol.ErrNone {
 		return &protocol.ProduceResponse{Err: code, ErrMsg: msg, BaseOffset: -1}
@@ -138,7 +139,7 @@ func (b *Broker) produce(ctx context.Context, req *protocol.ProduceRequest) *pro
 			timeout = 30 * time.Second
 		}
 		wctx, cancel := context.WithTimeout(ctx, timeout)
-		code := p.waitForHW(wctx, end, epoch)
+		code := p.waitForHW(wctx, end, epoch, minISR)
 		cancel()
 		if code != protocol.ErrNone {
 			return &protocol.ProduceResponse{Err: code, BaseOffset: -1, ErrMsg: "batch not committed by ISR"}

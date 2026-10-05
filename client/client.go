@@ -27,6 +27,9 @@ type Config struct {
 	RequestTimeout time.Duration
 	// MetadataMaxAge forces a metadata refresh this often (default 30s).
 	MetadataMaxAge time.Duration
+	// UnknownTopicWait is how long lookups keep refreshing metadata for a
+	// topic that is not known yet (default 3s).
+	UnknownTopicWait time.Duration
 	// Dialer allows fault injection in tests (nil = plain TCP).
 	Dialer *transport.Dialer
 	Logger *slog.Logger
@@ -57,6 +60,9 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.MetadataMaxAge == 0 {
 		cfg.MetadataMaxAge = 30 * time.Second
+	}
+	if cfg.UnknownTopicWait == 0 {
+		cfg.UnknownTopicWait = 3 * time.Second
 	}
 	if cfg.ClientID == "" {
 		cfg.ClientID = "streamhub-go"
@@ -179,16 +185,24 @@ func (c *Client) Topic(ctx context.Context, name string) (protocol.TopicInfo, er
 	if ok {
 		return t, nil
 	}
-	if err := c.RefreshMetadata(ctx); err != nil {
-		return protocol.TopicInfo{}, err
+	// Unknown: refresh a few times. A topic created moments ago may not
+	// have reached the broker we asked yet (metadata is replayed from the
+	// Raft log on each broker).
+	deadline := time.Now().Add(c.cfg.UnknownTopicWait)
+	for attempt := 0; ; attempt++ {
+		if err := c.RefreshMetadata(ctx); err != nil {
+			return protocol.TopicInfo{}, err
+		}
+		c.mu.RLock()
+		t, ok = c.topics[name]
+		c.mu.RUnlock()
+		if ok {
+			return t, nil
+		}
+		if time.Now().After(deadline) || sleepCtx(ctx, backoff(attempt)) != nil {
+			return protocol.TopicInfo{}, &protocol.Error{Code: protocol.ErrUnknownTopicOrPartition, Msg: name}
+		}
 	}
-	c.mu.RLock()
-	t, ok = c.topics[name]
-	c.mu.RUnlock()
-	if !ok {
-		return protocol.TopicInfo{}, &protocol.Error{Code: protocol.ErrUnknownTopicOrPartition, Msg: name}
-	}
-	return t, nil
 }
 
 // Partitions returns the number of partitions of a topic.

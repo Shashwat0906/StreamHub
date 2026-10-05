@@ -69,6 +69,12 @@ func responseError(m protocol.Message) protocol.ErrorCode {
 		return r.Err
 	case *protocol.BrokerHeartbeatResponse:
 		return r.Err
+	case *protocol.DescribeGroupResponse:
+		return r.Err
+	case *protocol.OffsetForLeaderEpochResponse:
+		return r.Err
+	case *protocol.InitProducerIDResponse:
+		return r.Err
 	}
 	return protocol.ErrNone
 }

@@ -8,7 +8,7 @@ Only results that were actually run are reported here.
 | 1 — Single-node broker | done |
 | 2 — Cluster metadata (Raft) | done |
 | 3 — Replication | done |
-| 4 — Consumer groups | not started |
+| 4 — Consumer groups | done |
 | 5 — Idempotence, retention, metrics, hardening | not started |
 | 6 — Benchmarks & docs | not started |
 
@@ -151,4 +151,52 @@ follower could store a log with holes. Fixed both (read stops at the
 segment; replicated batches must be contiguous) and added regression tests
 that fail on the old code.
 
-Not done yet: consumer groups.
+## Phase 4 — consumer groups (done)
+
+Done:
+* Internal topic `__consumer_offsets` (8 partitions, RF = min(3, live
+  brokers), created on first FindCoordinator). Coordinator for a group =
+  leader of partition `fnv(group) % 8`.
+* Coordinator: JoinGroup (blocks until the rebalance completes), Heartbeat,
+  LeaveGroup, session expiry, rebalance timeout (members that do not rejoin
+  are removed), initial join delay so consumers starting together cause one
+  rebalance, eager "stop-the-world" rebalancing, **server-side** assignment
+  (range or round-robin; Kafka does it client-side via SyncGroup).
+* Committed offsets are records in `__consumer_offsets` written with
+  acks=all; a new coordinator rebuilds its cache by reading the partition.
+  Commits from a stale generation or unknown member are rejected
+  (zombie fencing).
+* Client `GroupConsumer`: join/rejoin, heartbeat goroutine, commit before
+  rejoining and on close, positions from committed offsets or reset policy.
+  CLI: `consume --group`, `group list`, `group describe` (members,
+  assignment, committed offset, end offset, lag).
+
+Tests run (`go test -race`, all passing, full suite run 3× then 2×):
+* unit: range and round-robin (exact layout, completeness, no duplicates,
+  balance, mixed subscriptions, determinism).
+* integration: 2 members split 6 partitions 3/3; third member → 2/2/2 and
+  generation bump; graceful leave → 3/3 (~0.3 s, no session wait); lag 0 and
+  committed offsets sum to records produced.
+* **member crash with uncommitted work**: one run logged "a processed 100
+  records without committing; after its crash 100 records were
+  redelivered, 0 lost"; the survivor resumed exactly at the committed
+  offsets (asserted per partition).
+* zombie commit with an old generation → ILLEGAL_GENERATION; unknown member
+  → UNKNOWN_MEMBER_ID; round-robin across two topics; **coordinator broker
+  killed**: consumer moved to the new coordinator, 300/300 records, 0
+  duplicates (committed offsets survived).
+* Real processes: two `consume --group` CLIs split 4 partitions 2/2, read
+  1000 distinct records, lag 0; 50 more produced → lag 50 → group resumed
+  and read exactly 50.
+
+Bugs found and fixed in this phase:
+1. **acks=all could be acknowledged with ISR below min.insync.replicas**
+   if the ISR shrank while the write waited for the HW (flaky
+   `TestNotEnoughReplicas`). The leader now re-checks after the HW wait and
+   returns NOT_ENOUGH_REPLICAS_AFTER_APPEND, like Kafka.
+2. A `produce` right after `topic create` could hit a broker that had not
+   applied the topic yet. CreateTopic now waits until every broker sees it,
+   and topic lookups retry unknown topics briefly.
+3. My first version of the crash test passed without checking anything
+   (its wait condition was already true); rewritten so it requires the
+   survivor to re-read the uncommitted range.
