@@ -264,6 +264,20 @@ offset moves forward; fetches below it get `OFFSET_OUT_OF_RANGE`.
   (Kafka does assignment client-side in a SyncGroup step; we simplify.)
 * `OffsetCommit` with a stale generation is rejected → zombie consumers
   cannot overwrite offsets after being kicked out.
+* Retention is disabled on `__consumer_offsets` because there is no log
+  compaction; it grows with every commit (documented limitation).
+
+## 6b. Additions made during implementation
+
+* **Preferred-leader rebalancing**: the controller periodically moves
+  leadership back to `Replicas[0]` when it is alive and in the ISR, so a
+  restarted broker gets its share of leaders back (`elect_leader` command).
+* **Controlled shutdown**: a graceful stop asks the controller to fence the
+  broker first, so leadership moves immediately instead of after the
+  session timeout.
+* **NOT_ENOUGH_REPLICAS_AFTER_APPEND**: the ISR-size check is repeated
+  after the acks=all wait (found by a flaky test).
+* **max.message.bytes** per topic (default 1 MiB).
 
 ---
 

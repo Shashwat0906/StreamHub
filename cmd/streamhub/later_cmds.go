@@ -128,5 +128,3 @@ func consumeGroup(ctx context.Context, c *client.Client, group, topic, strategy,
 	}
 	return nil
 }
-
-func runPerf(args []string) error { return errors.New("perf tool arrives in Phase 6") }

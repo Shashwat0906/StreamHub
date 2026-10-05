@@ -10,6 +10,7 @@
 #
 # Brokers listen on 127.0.0.1:9092-9094, HTTP on 8081-8083.
 # Data: ./cluster-data/broker-N, logs: ./cluster-data/broker-N.log
+# Extra broker flags: STREAMHUB_BROKER_ARGS="--fsync" scripts/cluster.sh start
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -41,6 +42,7 @@ start_one() {
     --peers "$PEERS" \
     --default-replication-factor 3 \
     --min-insync-replicas 2 \
+    ${STREAMHUB_BROKER_ARGS:-} \
     >"$DATA/broker-$id.log" 2>&1 &
   echo $! >"$(pidfile "$id")"
   echo "broker $id started: 127.0.0.1:$port (http :$http) pid $!"
@@ -68,7 +70,14 @@ stop_one() {
   local f
   f=$(pidfile "$1")
   if [[ -f $f ]]; then
-    kill "$(cat "$f")" 2>/dev/null || true
+    local pid
+    pid=$(cat "$f")
+    kill "$pid" 2>/dev/null || true
+    # Wait for the process to exit so its ports are free for a restart.
+    for _ in $(seq 1 100); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
     rm -f "$f"
     echo "broker $1 stopped"
   fi

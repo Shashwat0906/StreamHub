@@ -10,7 +10,7 @@ Only results that were actually run are reported here.
 | 3 — Replication | done |
 | 4 — Consumer groups | done |
 | 5 — Idempotence, retention, metrics, hardening | done |
-| 6 — Benchmarks & docs | not started |
+| 6 — Benchmarks & docs | done |
 
 ## How to run (current state)
 
@@ -244,4 +244,61 @@ Tests run (`go test -race`, full suite 3× in a row, all passing):
   stop returned, with a 10 s session timeout).
 * Fuzzing: `FuzzDecodeRecord` ~438k execs / 20 s, `FuzzDecodeRequests`
   ~325k execs / 20 s, no crashes (bounded runs, not exhaustive).
+
+## Phase 6 — benchmarks, docs, packaging (done)
+
+Done:
+* `streamhub perf produce|consume` load generator (throughput, per-record
+  latency percentiles).
+* `docs/BENCHMARKS.md`: storage micro-benchmarks (3 runs) and end-to-end
+  runs on the 3-process cluster: acks=all/1, RF 3/1, 100 B/1 KiB, consume,
+  one-at-a-time latency, `--fsync`, plus 3 repeats for variance. All on one
+  2-vCPU VM, which the document states prominently.
+* `docs/LEARNING.md`: every component explained simply, walkthroughs and
+  interview Q&A.
+* `README.md`: features, guarantees, quick start, client example (compiled
+  as `client/example_test.go`), CLI, testing, limitations.
+* `Dockerfile` (multi-stage → `FROM scratch`, ~11 MB) and
+  `docker-compose.yml` (3 brokers, healthchecks via `streamhub healthcheck`).
+* `.github/workflows/ci.yml` (gofmt, vet, `go test -race`).
+* `scripts/cluster.sh` now waits for brokers to exit on stop, and accepts
+  extra broker flags via `STREAMHUB_BROKER_ARGS`.
+
+What was run:
+* All benchmarks listed in docs/BENCHMARKS.md, with the exact output.
+* README quick start executed verbatim against the 3-process cluster
+  (create, produce, group consume, describe, `SIGKILL` broker 2 → shown as
+  fenced, restart, `/healthz`, `/metrics`).
+* docker-compose: the Docker daemon could be started in this environment,
+  but **Docker Hub is blocked here**, so the multi-stage `Dockerfile` (which
+  pulls `golang:1.24-alpine`) could **not** be built. To still test the
+  compose file, an equivalent `FROM scratch` image was built from the
+  locally compiled static binary and started with
+  `docker compose up -d --no-build`: all 3 containers became healthy,
+  a RF=3 topic was created, 5000 records produced, the `broker2` container
+  was stopped, 1000 more produced, all 6000 consumed back unique, and after
+  `docker compose start broker2` it rejoined every ISR.
+* CI workflow: written but **not run** (no GitHub Actions runner here).
+
+## Final verification
+
+* `gofmt -l .` clean, `go vet ./...` clean.
+* `go test -race ./...` passes (see the commit for the run used).
+
+## Bugs found by testing (all fixed, with regression tests)
+
+1. Log read across a segment boundary skipped the rest of the segment when
+   the byte budget ran out (found by a 3M-record real-process run).
+2. Replicated appends only checked increasing offsets, so a follower could
+   store holes (found while analysing bug 1).
+3. acks=all could be acknowledged with ISR < min.insync.replicas if the
+   ISR shrank during the wait (flaky test).
+4. Requests arriving during broker startup saw half-initialised state
+   (race detector).
+5. Undecodable responses were retried as network errors for the whole
+   delivery timeout (CLI smoke test).
+6. A command right after `topic create` could hit a broker that had not
+   applied the topic yet (real-process CLI run).
+7. `scripts/cluster.sh stop` did not wait for exit, so an immediate
+   `start` could fail on busy ports (benchmark run).
 

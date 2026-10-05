@@ -27,6 +27,7 @@ Usage:
   streamhub cluster  describe [flags]        show brokers, controller, partitions
   streamhub group    list|describe [flags]   consumer groups
   streamhub perf     produce|consume [flags] load generator
+  streamhub healthcheck [--http addr]        exit 0 if the broker is ready
 
 Client commands read the bootstrap list from --bootstrap or $STREAMHUB_BOOTSTRAP
 (default localhost:9092). Run "streamhub <command> -h" for flags.
@@ -55,6 +56,8 @@ func main() {
 		err = runGroup(args)
 	case "perf":
 		err = runPerf(args)
+	case "healthcheck":
+		err = runHealthcheck(args)
 	case "-h", "--help", "help":
 		usage()
 		return

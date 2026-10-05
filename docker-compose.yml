@@ -1,0 +1,56 @@
+# Three-broker StreamHub cluster.
+#
+#   docker compose up -d --build
+#   docker compose exec broker1 /streamhub cluster describe --bootstrap broker1:9092
+#   docker compose exec broker1 /streamhub topic create --name demo --partitions 3 --replication-factor 3 --bootstrap broker1:9092
+#
+# Brokers advertise their compose hostnames (broker1:9092 ...), which only
+# resolve inside the compose network, so run clients with
+# "docker compose exec" (or attach your own container to the network).
+# Metrics/health are published on the host: localhost:8081-8083.
+
+x-broker: &broker
+  build: .
+  image: streamhub:local
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "/streamhub", "healthcheck", "--http", "127.0.0.1:8080"]
+    interval: 5s
+    timeout: 3s
+    retries: 12
+
+services:
+  broker1:
+    <<: *broker
+    hostname: broker1
+    command: ["broker", "--id", "1", "--listen", "0.0.0.0:9092", "--advertise", "broker1:9092",
+              "--http", "0.0.0.0:8080", "--data-dir", "/data",
+              "--peers", "1=broker1:9092,2=broker2:9092,3=broker3:9092",
+              "--default-replication-factor", "3", "--min-insync-replicas", "2"]
+    volumes: ["broker1-data:/data"]
+    ports: ["8081:8080"]
+
+  broker2:
+    <<: *broker
+    hostname: broker2
+    command: ["broker", "--id", "2", "--listen", "0.0.0.0:9092", "--advertise", "broker2:9092",
+              "--http", "0.0.0.0:8080", "--data-dir", "/data",
+              "--peers", "1=broker1:9092,2=broker2:9092,3=broker3:9092",
+              "--default-replication-factor", "3", "--min-insync-replicas", "2"]
+    volumes: ["broker2-data:/data"]
+    ports: ["8082:8080"]
+
+  broker3:
+    <<: *broker
+    hostname: broker3
+    command: ["broker", "--id", "3", "--listen", "0.0.0.0:9092", "--advertise", "broker3:9092",
+              "--http", "0.0.0.0:8080", "--data-dir", "/data",
+              "--peers", "1=broker1:9092,2=broker2:9092,3=broker3:9092",
+              "--default-replication-factor", "3", "--min-insync-replicas", "2"]
+    volumes: ["broker3-data:/data"]
+    ports: ["8083:8080"]
+
+volumes:
+  broker1-data:
+  broker2-data:
+  broker3-data:
