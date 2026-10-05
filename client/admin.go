@@ -49,6 +49,7 @@ type TopicSpec struct {
 func (c *Client) CreateTopic(ctx context.Context, spec TopicSpec) error {
 	ctx, cancel := withDefaultTimeout(ctx, 30*time.Second)
 	defer cancel()
+	attempted := false
 	err := c.retry(ctx, func() error {
 		addr, err := c.controllerAddr(ctx)
 		if err != nil {
@@ -58,7 +59,16 @@ func (c *Client) CreateTopic(ctx context.Context, spec TopicSpec) error {
 		req := &protocol.CreateTopicRequest{Name: spec.Name, Partitions: spec.Partitions,
 			ReplicationFactor: spec.ReplicationFactor, Configs: spec.Configs}
 		if err := c.call(ctx, addr, protocol.APICreateTopic, req, &resp); err != nil {
+			attempted = true
 			return err
+		}
+		// A previous attempt may have committed before its reply was lost
+		// (e.g. controller failover); "already exists" then means success.
+		if resp.Err == protocol.ErrTopicAlreadyExists && attempted {
+			return nil
+		}
+		if resp.Err.Retriable() {
+			attempted = true
 		}
 		return resp.Err.AsError(resp.ErrMsg)
 	})

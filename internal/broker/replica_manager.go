@@ -106,6 +106,11 @@ func (rm *ReplicaManager) logConfig(t metadata.TopicMeta) storage.Config {
 
 // reconcile brings local replicas in line with metadata.
 func (rm *ReplicaManager) reconcile() {
+	// Do not act on a half-replayed metadata log (e.g. right after a
+	// restart): we could briefly follow long-gone leaders.
+	if !rm.b.metadataReady() {
+		return
+	}
 	self := rm.b.cfg.ID
 	desired := map[tp]metadata.PartitionMeta{}
 	topics := map[string]metadata.TopicMeta{}

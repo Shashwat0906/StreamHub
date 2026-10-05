@@ -14,6 +14,11 @@ import (
 
 // handle is the transport.Handler: decode, dispatch, encode.
 func (b *Broker) handle(ctx context.Context, h protocol.RequestHeader, body []byte) protocol.Message {
+	select {
+	case <-b.initDone:
+	case <-ctx.Done():
+		return nil
+	}
 	start := time.Now()
 	resp := b.dispatch(ctx, h, body)
 	b.observeRequest(h.API, time.Since(start), resp)

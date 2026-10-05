@@ -11,10 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Shashwat0906/StreamHub/internal/metadata"
 	"github.com/Shashwat0906/StreamHub/internal/protocol"
+	"github.com/Shashwat0906/StreamHub/internal/raft"
 	"github.com/Shashwat0906/StreamHub/internal/storage"
 	"github.com/Shashwat0906/StreamHub/internal/transport"
 )
@@ -118,9 +120,13 @@ type Broker struct {
 	pool   *transport.Pool
 	addr   string // advertised address
 
-	meta     *metadata.Store
-	proposer metadata.Proposer
-	closers  []func() error
+	meta       *metadata.Store
+	proposer   metadata.Proposer
+	raft       *raft.Node // nil in standalone mode
+	controller *controller
+	closers    []func() error
+
+	lastHeartbeatOK atomic.Int64 // unix nanos of the last good controller heartbeat
 
 	replicas *ReplicaManager
 	metrics  *brokerMetrics
@@ -129,6 +135,11 @@ type Broker struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// initDone is closed once every component is wired up. The listener
+	// must exist earlier (we need its address), so requests that arrive
+	// during startup wait for this instead of seeing half-built state.
+	initDone chan struct{}
 
 	closeOnce sync.Once
 }
@@ -144,12 +155,13 @@ func New(cfg Config) (*Broker, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &Broker{
-		cfg:     cfg,
-		logger:  cfg.Logger.With("broker", cfg.ID),
-		meta:    metadata.NewStore(),
-		metrics: newBrokerMetrics(),
-		ctx:     ctx,
-		cancel:  cancel,
+		cfg:      cfg,
+		logger:   cfg.Logger.With("broker", cfg.ID),
+		meta:     metadata.NewStore(),
+		metrics:  newBrokerMetrics(),
+		ctx:      ctx,
+		cancel:   cancel,
+		initDone: make(chan struct{}),
 	}
 
 	srv, err := transport.Listen(cfg.ListenAddr, b.handle, b.logger)
@@ -182,13 +194,17 @@ func New(cfg Config) (*Broker, error) {
 		return nil, err
 	}
 
+	close(b.initDone)
 	b.logger.Info("broker started", "addr", b.addr, "data_dir", cfg.DataDir)
 	return b, nil
 }
 
-// startMetadata opens the metadata log. Standalone mode uses a local log;
-// clustered mode (Phase 2) uses Raft.
+// startMetadata opens the metadata log. Standalone mode (no peers) uses a
+// local log; clustered mode uses Raft.
 func (b *Broker) startMetadata() error {
+	if len(b.cfg.Peers) > 0 {
+		return b.startRaft()
+	}
 	path := filepath.Join(b.cfg.DataDir, "metadata.log")
 	ll, err := metadata.OpenLocalLog(path, b.meta, b.cfg.ID)
 	if err != nil {

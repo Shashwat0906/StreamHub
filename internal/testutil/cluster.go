@@ -102,7 +102,41 @@ func NewCluster(t testing.TB, n int, opts ...func(*broker.Config)) *Cluster {
 		c.Brokers[s.id] = s.b
 	}
 	t.Cleanup(c.Close)
+	c.WaitReady(n)
 	return c
+}
+
+// WaitReady waits until every running broker is ready and sees `live`
+// unfenced brokers.
+func (c *Cluster) WaitReady(live int) {
+	c.T.Helper()
+	Eventually(c.T, 20*time.Second, func() error {
+		for id, b := range c.Brokers {
+			if !b.Ready() {
+				return fmt.Errorf("broker %d not ready", id)
+			}
+			if n := len(b.Metadata().LiveBrokers()); n != live {
+				return fmt.Errorf("broker %d sees %d live brokers, want %d", id, n, live)
+			}
+		}
+		return nil
+	})
+}
+
+// Controller returns the ID of the broker that is the active controller.
+func (c *Cluster) Controller() int32 {
+	c.T.Helper()
+	var ctrl int32 = -1
+	Eventually(c.T, 10*time.Second, func() error {
+		for id, b := range c.Brokers {
+			if b.IsController() {
+				ctrl = id
+				return nil
+			}
+		}
+		return fmt.Errorf("no controller")
+	})
+	return ctrl
 }
 
 // IDs returns running broker IDs, sorted.

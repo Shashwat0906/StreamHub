@@ -6,7 +6,7 @@ Only results that were actually run are reported here.
 |---|---|
 | 0 — Plan | done |
 | 1 — Single-node broker | done |
-| 2 — Cluster metadata (Raft) | not started |
+| 2 — Cluster metadata (Raft) | done |
 | 3 — Replication | not started |
 | 4 — Consumer groups | not started |
 | 5 — Idempotence, retention, metrics, hardening | not started |
@@ -63,4 +63,46 @@ Bug found and fixed during the smoke test: an undecodable response was
 classified as a network error, so the producer retried it for its whole
 delivery timeout. Decode errors are now non-retriable.
 
-Not done yet: multi-broker cluster, replication, consumer groups.
+## Phase 2 — cluster metadata (done)
+
+Done:
+* `internal/raft`: leader election (randomised timeouts, election
+  restriction), log replication with fast conflict back-off, commit only of
+  current-term entries, leader no-op on election, **check-quorum** (an
+  isolated leader steps down), durable term/vote (fsync + atomic rename)
+  and log (CRC per entry, torn-tail recovery).
+* Every broker is a Raft voter; the Raft leader is the active controller.
+  Metadata commands are applied by every broker, so all brokers converge to
+  the same image (verified in tests).
+* Controller: broker heartbeats → register/unfence; missed session →
+  `FenceBroker` command → deterministic leader election from the ISR in
+  the state machine. A newly elected controller grants every broker a full
+  session before fencing anyone.
+* Broker self-fencing: a broker without a successful controller heartbeat
+  for 3/4 of the session timeout refuses leader writes.
+* Requests arriving during broker startup wait until it is fully wired
+  (found by the race detector).
+* `scripts/cluster.sh`: 3 separate broker processes, separate data dirs and
+  ports, `start|stop|status|kill N|restart N|clean`.
+
+Tests run (`go test -race`, all passing, integration suite run 3× in a row):
+* raft (in-memory network): election + replication, leader failover and
+  restart catch-up from disk, isolated leader cannot commit and steps down,
+  divergent uncommitted entry overwritten after heal, single node, WAL
+  torn-tail recovery.
+* integration (3 in-process brokers, real TCP): cluster forms, partitions
+  spread over all brokers, identical metadata on every broker, client
+  routes to leaders; controller failover (new controller, dead broker
+  fenced, topic creation still works, dead broker excluded from placement,
+  rejoin); RF=1 partition goes offline when its broker dies and comes back
+  with its data when the broker returns; full cluster restart keeps topics.
+* Manual run of `scripts/cluster.sh` with 3 OS processes: create topic,
+  produce, `SIGKILL` the controller → another broker became controller,
+  restart → all 3 ready again.
+
+Known limitation found: follower metadata is eventually consistent, so a
+client may briefly not see a just-created topic on some brokers (clients
+retry; tests poll).
+
+Not done yet: replication of partition data (RF>1 topics have followers in
+metadata but they do not fetch yet), consumer groups.

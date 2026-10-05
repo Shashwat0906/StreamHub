@@ -3,3 +3,4 @@ data/
 *.test
 *.out
 /streamhub
+cluster-data/

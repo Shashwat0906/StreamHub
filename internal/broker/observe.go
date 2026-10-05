@@ -219,3 +219,12 @@ func (b *Broker) health() Health {
 
 // HTTPAddr returns the actual HTTP listen address ("" if disabled).
 func (b *Broker) HTTPAddr() string { return b.httpAddr }
+
+// Ready reports whether the broker knows a controller, has replayed the
+// metadata log and is allowed to lead partitions.
+func (b *Broker) Ready() bool {
+	return b.health().Ready && b.metadataReady()
+}
+
+// RaftStatus is exposed for tests and diagnostics (zero value standalone).
+func (b *Broker) IsController() bool { return b.proposer != nil && b.proposer.IsLeader() }
