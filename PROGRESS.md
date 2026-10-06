@@ -259,7 +259,7 @@ Done:
   interview Q&A.
 * `README.md`: features, guarantees, quick start, client example (compiled
   as `client/example_test.go`), CLI, testing, limitations.
-* `Dockerfile` (multi-stage → `FROM scratch`, ~11 MB) and
+* `Dockerfile` (multi-stage → `FROM scratch`, 12 MB) and
   `docker-compose.yml` (3 brokers, healthchecks via `streamhub healthcheck`).
 * `.github/workflows/ci.yml` (gofmt, vet, `go test -race`).
 * `scripts/cluster.sh` now waits for brokers to exit on stop, and accepts
@@ -279,6 +279,8 @@ What was run:
   a RF=3 topic was created, 5000 records produced, the `broker2` container
   was stopped, 1000 more produced, all 6000 consumed back unique, and after
   `docker compose start broker2` it rejoined every ISR.
+  (Later superseded: the real multi-stage build was run in phase 7, see
+  below.)
 * CI workflow: written but **not run** (no GitHub Actions runner here).
 
 ## Final verification
@@ -349,10 +351,43 @@ What was run:
   → election → ISR shrink → rebalance), clicked Restart and captured
   recovery and, ~30 s later, leadership moving back; DLQ Retry clicked in
   the UI (entry marked retried, re-failed message shows 1/3).
-* Docker: dashboard container attached to 3 broker containers
-  (`docker compose up --no-build` with a locally built scratch image, as
-  Docker Hub is blocked here): `docker compose kill broker2` → dashboard
-  showed fenced/leader lost/elected/ISR shrink; after `start`, all ISRs 3.
+* Docker, first pass (Docker Hub blocked at the time): compose stack run
+  with `--no-build` on a locally built scratch image; `docker compose kill
+  broker2` → dashboard showed fenced/leader lost/elected/ISR shrink; after
+  `start`, all ISRs 3.
+* Docker, real build (after registry access was granted, 2026-10-06):
+  * `docker build --no-cache -t streamhub:local .` with the multi-stage
+    `Dockerfile` (`golang:1.24-alpine` → `scratch`) succeeded in ~22 s
+    (go build step 14.5 s, "no module dependencies to download"); image
+    size 12 MB. `docker compose build --no-cache` also succeeded (~17 s).
+  * `docker compose down -v && docker compose up -d --build`: broker1–3
+    healthy (compose healthcheck) within ~6 s, dashboard on :8090.
+  * Broker-failure test through the dashboard API (attached mode):
+    topic `payments` (6 partitions, RF 3, min ISR 2), 2 demo consumers in
+    group `settlement`, traffic generator at 50 msg/s acks=all.
+    Broker 2 was the Raft controller and led payments-1, payments-4 and
+    __consumer_offsets-0/3/6. `docker compose kill broker2` (SIGKILL) at
+    ~04:48:55 UTC. Events recorded by the dashboard (UTC):
+    * 04:48:56.2 broker 2 unavailable;
+    * 04:48:57.2 controller moved from broker 2 to broker 3 (Raft election);
+    * 04:49:02.4 broker 2 fenced (session expired), leader lost and new
+      leader elected (epoch 1) for all 5 partitions it led (payments-1 → 3,
+      payments-4 → 1), every ISR shrank to 2 replicas;
+    * 0 offline partitions; traffic kept flowing (~50 msg/s produced during
+      the outage, 0 errors reported to the traffic generator); the group
+      stayed Stable with both members.
+    `docker compose start broker2` at ~04:49:14 UTC:
+    * 04:49:15.2 broker 2 reachable, 04:49:16.2 re-registered (unfenced),
+      04:49:17.2 all 14 ISRs back to 3 replicas;
+    * 04:49:19.2 leadership moved back to preferred broker 2 (epoch 2) for
+      the 5 partitions.
+  * Brokers answered 2 Produce requests with NOT_LEADER (broker 1 and
+    broker 3 metrics) around the leadership changes; the producer retried
+    them, so the generator reported 0 errors.
+  * Data check after stopping traffic: generator `sent` = 6495; sum of
+    payments high-watermarks = 6495; `streamhub consume` of the whole topic
+    read 6495 records with 6495 unique `orderId`s (0 missing, 0
+    duplicates); group lag 0, dashboard "consumed" = 6495.
 
 Bugs found while verifying (all fixed):
 1. A crashed demo consumer kept reporting "running" (the dying loop

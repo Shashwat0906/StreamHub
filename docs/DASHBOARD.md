@@ -181,6 +181,31 @@ used.
 0.25.12), which loaded on all 9 routes in dark and light themes in Chromium
 with no console errors.
 
+## Docker run (verified)
+
+On 2026-10-06 the real multi-stage image was built (`docker build
+--no-cache`, ~22 s, 12 MB `scratch` image) and the stack started with
+`docker compose up -d --build`; the three brokers passed their compose
+healthchecks within ~6 s. With topic `payments` (6 partitions, RF 3),
+two demo consumers and 50 msg/s of acks=all traffic created through the
+dashboard API, `docker compose kill broker2` (broker 2 was also the Raft
+controller) produced this timeline in the dashboard:
+
+| Time after kill | Event |
+|---|---|
+| ~1 s | broker 2 unavailable |
+| ~2 s | controller moved to broker 3 (Raft election) |
+| ~7 s | broker 2 fenced; leader lost + new leader elected (epoch 1) for the 5 partitions it led; all ISRs shrank to 2 |
+
+No partition went offline, traffic continued with 0 errors reported to the
+generator (brokers answered 2 Produce requests NOT_LEADER, which the
+producer retried), and the group stayed Stable. After `docker compose
+start broker2`: reachable after ~1 s, re-registered after ~2 s, all ISRs
+back to 3 after ~3 s, leadership moved back to the preferred broker after
+~5 s. Afterwards the generator had sent 6495 records, the partitions'
+high-watermarks summed to 6495, and consuming the whole topic returned
+6495 records with 6495 unique order IDs.
+
 ## Tests
 
 `go test -race ./internal/dashboard` runs:
