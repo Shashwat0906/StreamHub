@@ -20,7 +20,8 @@ func runBroker(args []string) error {
 	id := fs.Int("id", 1, "broker ID (unique, > 0)")
 	listen := fs.String("listen", "127.0.0.1:9092", "protocol listen address")
 	advertise := fs.String("advertise", "", "address other brokers/clients use (default: listen address)")
-	httpAddr := fs.String("http", "127.0.0.1:8080", "HTTP address for /metrics and /healthz (empty = off)")
+	httpAddr := fs.String("http", "127.0.0.1:8080", "HTTP address for /metrics, /healthz, /v1/state (empty = off)")
+	advertiseHTTP := fs.String("advertise-http", "", "HTTP address published in cluster metadata (default: --http, with 0.0.0.0 replaced by the --advertise host)")
 	dataDir := fs.String("data-dir", "./data", "data directory")
 	peers := fs.String("peers", "", "metadata quorum: id=host:port,... including this broker (empty = standalone)")
 	minISR := fs.Int("min-insync-replicas", 1, "default min.insync.replicas for acks=all")
@@ -46,6 +47,7 @@ func runBroker(args []string) error {
 		ListenAddr:               *listen,
 		AdvertisedAddr:           *advertise,
 		HTTPAddr:                 *httpAddr,
+		AdvertisedHTTPAddr:       *advertiseHTTP,
 		DataDir:                  *dataDir,
 		Peers:                    peerMap,
 		MinInsyncReplicas:        *minISR,

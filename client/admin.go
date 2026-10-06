@@ -203,3 +203,16 @@ func (c *Client) RawProduceOffset(ctx context.Context, addr string, req *protoco
 	}
 	return resp.BaseOffset, resp.Err.AsError(resp.ErrMsg)
 }
+
+// DescribeClusterFrom asks one specific broker for metadata (no retries).
+// The dashboard uses it to prefer the controller's (freshest) view.
+func (c *Client) DescribeClusterFrom(ctx context.Context, addr string) (ClusterInfo, error) {
+	var resp protocol.MetadataResponse
+	if err := c.call(ctx, addr, protocol.APIMetadata, &protocol.MetadataRequest{}, &resp); err != nil {
+		return ClusterInfo{}, err
+	}
+	if resp.Err != protocol.ErrNone {
+		return ClusterInfo{}, resp.Err.AsError("metadata")
+	}
+	return ClusterInfo{ControllerID: resp.ControllerID, Brokers: resp.Brokers, Topics: resp.Topics}, nil
+}

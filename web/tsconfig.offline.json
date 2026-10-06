@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["/opt/npm-tools/node_modules/@types"],
+    "paths": {
+      "react": ["./src/shims/react.d.ts"],
+      "react/jsx-runtime": ["./src/shims/jsx-runtime.d.ts"],
+      "react-dom/client": ["./src/shims/react-dom-client.d.ts"],
+      "d3": ["/opt/npm-tools/node_modules/@types/d3/index.d.ts"],
+      "d3-*": ["/opt/npm-tools/node_modules/@types/d3-*/index.d.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": []
+}

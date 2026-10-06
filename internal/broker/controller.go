@@ -103,7 +103,7 @@ func (b *Broker) sendHeartbeat() {
 	if leader < 0 {
 		return
 	}
-	req := &protocol.BrokerHeartbeatRequest{BrokerID: b.cfg.ID, Addr: b.addr}
+	req := &protocol.BrokerHeartbeatRequest{BrokerID: b.cfg.ID, Addr: b.addr, HTTPAddr: b.advertisedHTTP}
 	var resp *protocol.BrokerHeartbeatResponse
 	if leader == b.cfg.ID {
 		resp = b.controller.onHeartbeat(b.ctx, req)
@@ -182,10 +182,10 @@ func (c *controller) onHeartbeat(ctx context.Context, req *protocol.BrokerHeartb
 	c.mu.Unlock()
 
 	bm, ok := b.meta.Broker(req.BrokerID)
-	if !ok || bm.Fenced || bm.Addr != req.Addr {
+	if !ok || bm.Fenced || bm.Addr != req.Addr || bm.HTTPAddr != req.HTTPAddr {
 		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		res, err := b.proposer.Propose(pctx, metadata.Command{Type: metadata.CmdRegisterBroker, BrokerID: req.BrokerID, Addr: req.Addr})
+		res, err := b.proposer.Propose(pctx, metadata.Command{Type: metadata.CmdRegisterBroker, BrokerID: req.BrokerID, Addr: req.Addr, HTTPAddr: req.HTTPAddr})
 		if err != nil {
 			return &protocol.BrokerHeartbeatResponse{Err: protocol.ErrNotController, ControllerID: b.proposer.LeaderID(), Fenced: true}
 		}

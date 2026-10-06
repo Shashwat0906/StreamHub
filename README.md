@@ -19,6 +19,22 @@ consumer group ──Fetch (long poll)┘   controller = Raft leader (metadata l
 * **Benchmarks:** [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 * **Status:** [`PROGRESS.md`](PROGRESS.md) records what was done and tested in each phase.
 
+## Web dashboard
+
+```bash
+go build -o bin/streamhub ./cmd/streamhub
+bin/streamhub dashboard --managed     # launches 3 brokers + demo traffic → http://127.0.0.1:8090
+```
+
+A React + TypeScript + Tailwind console fed live over Server-Sent Events. It covers:
+overview, brokers, topics and partitions, produce, live message stream,
+consumer groups, dead letter queue, and a failure-simulation page. On that page you
+can SIGKILL a broker and watch leader election, ISR changes, rebalancing and recovery
+step by step. Every value comes from the running cluster; see
+[`docs/DASHBOARD.md`](docs/DASHBOARD.md), which also lists what the backend cannot support.
+
+![Failure simulation](docs/images/failure-incident.png)
+
 ## Features
 
 | Area | What exists |
@@ -32,7 +48,8 @@ consumer group ──Fetch (long poll)┘   controller = Raft leader (metadata l
 | Consumer | Pull-based fetch with long polling, offset reset policy |
 | Groups | Join/heartbeat/leave, range and round-robin assignment, eager rebalancing, generation fencing, offsets stored in replicated `__consumer_offsets` |
 | Interfaces | Custom binary protocol over TCP, Go client library, CLI |
-| Observability | `log/slog` JSON logs, Prometheus `/metrics`, `/healthz`, `/readyz` |
+| Observability | `log/slog` JSON logs, Prometheus `/metrics`, `/healthz`, `/readyz`, JSON `/v1/state` |
+| Dashboard | React/TypeScript/Tailwind web console over SSE, failure simulation, DLQ (see docs/DASHBOARD.md) |
 
 ## Guarantees
 
@@ -89,7 +106,7 @@ docker compose down -v
 ```
 
 Brokers advertise their compose hostnames, so run clients through
-`docker compose exec`. More detail is in the comment at the top of `docker-compose.yml`.
+`docker compose exec`. The dashboard is at http://localhost:8090 (attached mode). More detail is in the comment at the top of `docker-compose.yml`.
 
 ### Single broker
 
@@ -133,6 +150,7 @@ streamhub cluster  describe
 streamhub group    list | describe --group G
 streamhub perf     produce|consume --topic T --records N [--size B] [--acks ...] [--inflight N]
 streamhub healthcheck --http host:port
+streamhub dashboard [--managed | --bootstrap h:p,...] [--listen 127.0.0.1:8090]
 ```
 
 ## Testing
@@ -169,10 +187,12 @@ internal/raft/        Raft for the metadata quorum
 internal/metadata/    deterministic metadata state machine
 internal/broker/      broker: handlers, replica manager, fetchers, controller, groups
 internal/metrics/     Prometheus text exposition
+internal/dashboard/    dashboard backend (snapshot collector, SSE, demo consumers, DLQ, process manager) + embedded UI
 internal/testutil/    in-process cluster harness
 internal/integration/ end-to-end and failure tests
+web/                  dashboard source (React + TypeScript + Tailwind, d3 charts)
 scripts/cluster.sh    local 3-process cluster
-docs/                 LEARNING.md, BENCHMARKS.md
+docs/                 LEARNING.md, BENCHMARKS.md, DASHBOARD.md
 ```
 
 ## Known limitations

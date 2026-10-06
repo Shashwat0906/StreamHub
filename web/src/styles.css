@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (toggle in the header, persisted in localStorage). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic colour tokens: components use bg-surface-1, text-ink-2, ...
+   so both themes are defined in one place. */
+:root {
+  --surface-0: #f6f7f9;
+  --surface-1: #ffffff;
+  --surface-2: #f0f2f5;
+  --surface-3: #e5e8ec;
+  --line: #e2e5ea;
+  --ink: #0f172a;
+  --ink-2: #475569;
+  --ink-3: #8592a3;
+  --accent: #059669;
+  --accent-soft: #d1fae5;
+  --ok: #059669;
+  --ok-soft: #dcfce7;
+  --warn: #c2410c;
+  --warn-soft: #ffedd5;
+  --bad: #dc2626;
+  --bad-soft: #fee2e2;
+  --info: #2563eb;
+  --info-soft: #dbeafe;
+  --violet: #7c3aed;
+  --violet-soft: #ede9fe;
+  --chart-grid: #e8ebef;
+}
+
+.dark {
+  --surface-0: #0b0f14;
+  --surface-1: #11161d;
+  --surface-2: #171e27;
+  --surface-3: #212a35;
+  --line: #222b36;
+  --ink: #e6ebf1;
+  --ink-2: #a3afbf;
+  --ink-3: #6b7889;
+  --accent: #34d399;
+  --accent-soft: #0b3b2c;
+  --ok: #34d399;
+  --ok-soft: #0c3326;
+  --warn: #fb923c;
+  --warn-soft: #3d2410;
+  --bad: #f87171;
+  --bad-soft: #3e1717;
+  --info: #60a5fa;
+  --info-soft: #132a4a;
+  --violet: #a78bfa;
+  --violet-soft: #2b2050;
+  --chart-grid: #1c242e;
+}
+
+@theme inline {
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    font-feature-settings: "cv11", "ss01", "tnum";
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-3) transparent;
+  }
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  80%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+.pulse-dot {
+  animation: pulse-ring 1.8s ease-out infinite;
+}
+@keyframes flash-in {
+  from { background-color: color-mix(in srgb, var(--accent) 22%, transparent); }
+  to { background-color: transparent; }
+}
+.flash-in {
+  animation: flash-in 1.6s ease-out;
+}
+@keyframes slide-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.slide-up {
+  animation: slide-up 0.18s ease-out;
+}

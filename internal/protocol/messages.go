@@ -291,9 +291,10 @@ func (m *MetadataRequest) Encode(e *Encoder) { e.Strings(m.Topics) }
 func (m *MetadataRequest) Decode(d *Decoder) { m.Topics = d.Strings() }
 
 type BrokerInfo struct {
-	ID     int32
-	Addr   string
-	Fenced bool
+	ID       int32
+	Addr     string
+	Fenced   bool
+	HTTPAddr string // advertised /metrics + /v1/state address ("" if disabled)
 }
 
 type PartitionInfo struct {
@@ -326,6 +327,7 @@ func (m *MetadataResponse) Encode(e *Encoder) {
 		e.Int32(b.ID)
 		e.String(b.Addr)
 		e.Bool(b.Fenced)
+		e.String(b.HTTPAddr)
 	}
 	e.ArrayLen(len(m.Topics))
 	for _, t := range m.Topics {
@@ -346,12 +348,13 @@ func (m *MetadataResponse) Encode(e *Encoder) {
 func (m *MetadataResponse) Decode(d *Decoder) {
 	m.Err = ErrorCode(d.Int16())
 	m.ControllerID = d.Int32()
-	nb := d.ArrayLen(7)
+	nb := d.ArrayLen(9)
 	m.Brokers = make([]BrokerInfo, nb)
 	for i := range m.Brokers {
 		m.Brokers[i].ID = d.Int32()
 		m.Brokers[i].Addr = d.String()
 		m.Brokers[i].Fenced = d.Bool()
+		m.Brokers[i].HTTPAddr = d.String()
 	}
 	nt := d.ArrayLen(8)
 	m.Topics = make([]TopicInfo, nt)
@@ -774,6 +777,7 @@ func (m *OffsetForLeaderEpochResponse) Decode(d *Decoder) {
 type BrokerHeartbeatRequest struct {
 	BrokerID int32
 	Addr     string
+	HTTPAddr string
 	// ShuttingDown asks the controller to fence this broker now, moving
 	// its partition leadership away before it stops (controlled shutdown).
 	ShuttingDown bool
@@ -782,12 +786,14 @@ type BrokerHeartbeatRequest struct {
 func (m *BrokerHeartbeatRequest) Encode(e *Encoder) {
 	e.Int32(m.BrokerID)
 	e.String(m.Addr)
+	e.String(m.HTTPAddr)
 	e.Bool(m.ShuttingDown)
 }
 
 func (m *BrokerHeartbeatRequest) Decode(d *Decoder) {
 	m.BrokerID = d.Int32()
 	m.Addr = d.String()
+	m.HTTPAddr = d.String()
 	m.ShuttingDown = d.Bool()
 }
 

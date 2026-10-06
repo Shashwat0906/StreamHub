@@ -29,7 +29,11 @@ type Config struct {
 	// the actual listen address.
 	AdvertisedAddr string
 	HTTPAddr       string // host:port for /metrics and /healthz ("" = disabled)
-	DataDir        string
+	// AdvertisedHTTPAddr is the HTTP address published in cluster metadata
+	// (used by the dashboard). Defaults to the listen address, with an
+	// unspecified host (0.0.0.0) replaced by the protocol address host.
+	AdvertisedHTTPAddr string
+	DataDir            string
 	// Peers lists every metadata-quorum voter (including this broker) as
 	// id -> address. Empty means standalone mode (single node, no Raft).
 	Peers map[int32]string
@@ -140,10 +144,12 @@ type Broker struct {
 
 	lastHeartbeatOK atomic.Int64 // unix nanos of the last good controller heartbeat
 
-	replicas *ReplicaManager
-	groups   *coordinator
-	metrics  *brokerMetrics
-	httpAddr string
+	replicas       *ReplicaManager
+	groups         *coordinator
+	metrics        *brokerMetrics
+	httpAddr       string
+	advertisedHTTP string
+	started        time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -175,6 +181,7 @@ func New(cfg Config) (*Broker, error) {
 		ctx:      ctx,
 		cancel:   cancel,
 		initDone: make(chan struct{}),
+		started:  time.Now(),
 	}
 
 	srv, err := transport.Listen(cfg.ListenAddr, b.handle, b.logger)
@@ -189,6 +196,11 @@ func New(cfg Config) (*Broker, error) {
 	}
 	b.pool = transport.NewPool(&transport.Dialer{Self: b.addr, Faults: cfg.Faults})
 
+	// HTTP first: its advertised address is part of broker registration.
+	if err := b.startHTTP(); err != nil {
+		b.Close()
+		return nil, err
+	}
 	if err := b.startMetadata(); err != nil {
 		b.Close()
 		return nil, err
@@ -205,10 +217,6 @@ func New(cfg Config) (*Broker, error) {
 	b.replicas = rm
 	rm.start()
 	b.registerGauges()
-	if err := b.startHTTP(); err != nil {
-		b.Close()
-		return nil, err
-	}
 
 	close(b.initDone)
 	b.logger.Info("broker started", "addr", b.addr, "data_dir", cfg.DataDir)
@@ -229,7 +237,7 @@ func (b *Broker) startMetadata() error {
 	b.proposer = ll
 	b.closers = append(b.closers, ll.Close)
 	// Register ourselves (standalone: we are our own controller).
-	res, err := ll.Propose(b.ctx, metadata.Command{Type: metadata.CmdRegisterBroker, BrokerID: b.cfg.ID, Addr: b.addr})
+	res, err := ll.Propose(b.ctx, metadata.Command{Type: metadata.CmdRegisterBroker, BrokerID: b.cfg.ID, Addr: b.addr, HTTPAddr: b.advertisedHTTP})
 	if err != nil {
 		return err
 	}

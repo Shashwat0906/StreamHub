@@ -489,6 +489,17 @@ func (c *Client) ListGroups(ctx context.Context) ([]protocol.GroupListing, error
 
 // DescribeGroup returns members, assignment and committed offsets with lag.
 func (c *Client) DescribeGroup(ctx context.Context, group string) (GroupInfo, error) {
+	return c.describeGroup(ctx, group, true)
+}
+
+// DescribeGroupOffsets is DescribeGroup without the per-partition
+// ListOffsets calls (End and Lag are -1); callers that already know the
+// high-watermarks (like the dashboard) compute lag themselves.
+func (c *Client) DescribeGroupOffsets(ctx context.Context, group string) (GroupInfo, error) {
+	return c.describeGroup(ctx, group, false)
+}
+
+func (c *Client) describeGroup(ctx context.Context, group string, withLag bool) (GroupInfo, error) {
 	ctx, cancel := withDefaultTimeout(ctx, 15*time.Second)
 	defer cancel()
 	gc := &GroupConsumer{c: c, cfg: GroupConfig{Group: group}}
@@ -516,6 +527,10 @@ func (c *Client) DescribeGroup(ctx context.Context, group string) (GroupInfo, er
 		info.Offsets = nil
 		for _, off := range o.Offsets {
 			g := GroupOffset{Topic: off.Topic, Partition: off.Partition, Committed: off.Offset, End: -1, Lag: -1}
+			if !withLag {
+				info.Offsets = append(info.Offsets, g)
+				continue
+			}
 			if end, err := c.ListOffsets(ctx, off.Topic, off.Partition, protocol.OffsetLatest); err == nil {
 				g.End, g.Lag = end, max(0, end-off.Offset)
 			}

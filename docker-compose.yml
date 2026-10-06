@@ -8,6 +8,7 @@
 # resolve inside the compose network, so run clients with
 # "docker compose exec" (or attach your own container to the network).
 # Metrics/health are published on the host: localhost:8081-8083.
+# Dashboard: http://localhost:8090
 
 x-broker: &broker
   build: .
@@ -49,6 +50,19 @@ services:
               "--default-replication-factor", "3", "--min-insync-replicas", "2"]
     volumes: ["broker3-data:/data"]
     ports: ["8083:8080"]
+
+  # Web dashboard (attached mode: monitoring, produce, live stream, consumer
+  # groups, DLQ, consumer-failure simulation). Broker kill/restart buttons
+  # need managed mode, where the dashboard owns the broker processes; with
+  # compose, simulate broker failure with `docker compose kill brokerN` and
+  # watch the dashboard react.
+  dashboard:
+    image: streamhub:local
+    restart: unless-stopped
+    command: ["dashboard", "--listen", "0.0.0.0:8090",
+              "--bootstrap", "broker1:9092,broker2:9092,broker3:9092"]
+    ports: ["8090:8090"]
+    depends_on: [broker1, broker2, broker3]
 
 volumes:
   broker1-data:

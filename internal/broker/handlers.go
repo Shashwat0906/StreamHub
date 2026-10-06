@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Shashwat0906/StreamHub/internal/metadata"
@@ -107,6 +108,9 @@ func (b *Broker) partitionOrError(topic string, id int32) (*Partition, protocol.
 
 func (b *Broker) handleProduce(ctx context.Context, req *protocol.ProduceRequest) protocol.Message {
 	resp := b.produce(ctx, req)
+	if resp.Err != protocol.ErrNone {
+		b.metrics.produceErrors.Inc()
+	}
 	if req.Acks == protocol.AcksNone {
 		return nil // acks=0: the producer is not waiting for a reply
 	}
@@ -139,7 +143,9 @@ func (b *Broker) produce(ctx context.Context, req *protocol.ProduceRequest) *pro
 	}
 	minISR := b.minISRFor(req.Topic)
 	base, end, epoch, code, msg := p.appendAsLeader(req, minISR)
-	b.metrics.recordsIn.Add(float64(len(req.Records)))
+	if !strings.HasPrefix(req.Topic, "__") { // offset commits are not user traffic
+		b.metrics.recordsIn.Add(float64(len(req.Records)))
+	}
 	if code != protocol.ErrNone {
 		return &protocol.ProduceResponse{Err: code, ErrMsg: msg, BaseOffset: -1}
 	}
@@ -191,6 +197,13 @@ func (b *Broker) handleFetch(ctx context.Context, req *protocol.FetchRequest) pr
 		resp, total, hasErr := b.fetchOnce(req)
 		if total >= minBytes || hasErr || maxWait <= 0 || !time.Now().Before(deadline) {
 			b.metrics.bytesOut.Add(float64(total))
+			if req.ReplicaID < 0 {
+				n := 0
+				for i := range resp.Partitions {
+					n += len(resp.Partitions[i].Records)
+				}
+				b.metrics.recordsOut.Add(float64(n))
+			}
 			return resp
 		}
 		timer := time.NewTimer(time.Until(deadline))
@@ -260,7 +273,7 @@ func (b *Broker) handleListOffsets(req *protocol.ListOffsetsRequest) protocol.Me
 func (b *Broker) handleMetadata(req *protocol.MetadataRequest) protocol.Message {
 	resp := &protocol.MetadataResponse{ControllerID: b.proposer.LeaderID()}
 	for _, bm := range b.meta.Brokers() {
-		resp.Brokers = append(resp.Brokers, protocol.BrokerInfo{ID: bm.ID, Addr: bm.Addr, Fenced: bm.Fenced})
+		resp.Brokers = append(resp.Brokers, protocol.BrokerInfo{ID: bm.ID, Addr: bm.Addr, Fenced: bm.Fenced, HTTPAddr: bm.HTTPAddr})
 	}
 	var topics []metadata.TopicMeta
 	if len(req.Topics) == 0 {

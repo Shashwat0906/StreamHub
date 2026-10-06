@@ -11,6 +11,7 @@ Only results that were actually run are reported here.
 | 4 — Consumer groups | done |
 | 5 — Idempotence, retention, metrics, hardening | done |
 | 6 — Benchmarks & docs | done |
+| 7 — Web dashboard | done |
 
 ## How to run (current state)
 
@@ -301,4 +302,78 @@ What was run:
    applied the topic yet (real-process CLI run).
 7. `scripts/cluster.sh stop` did not wait for exit, so an immediate
    `start` could fail on busy ports (benchmark run).
+
+## Phase 7 — web dashboard (done)
+
+Done (details and screenshots in `docs/DASHBOARD.md`):
+* `streamhub dashboard`: Go backend-for-frontend that aggregates a cluster
+  snapshot every second (metadata, group descriptions, each broker's new
+  `/v1/state` JSON endpoint), diffs snapshots into timeline events and
+  pushes both to the browser over Server-Sent Events; second SSE stream
+  for live messages; REST for produce, topics, DLQ retry, demo consumers,
+  traffic and broker control.
+* Managed mode launches and owns 3 broker processes (Kill = SIGKILL,
+  Graceful stop = SIGTERM/controlled shutdown, Restart); attached mode
+  monitors any cluster; docker-compose runs it next to the brokers.
+* React 19 + TypeScript + Tailwind v4 UI, d3 charts, embedded in the Go
+  binary: Overview, Broker Cluster (+ details drawer), Topics & Partitions
+  (tree + table), Produce, Live Stream, Consumer Groups, Dead Letter Queue,
+  Failure Simulation (six-step incident tracker, leadership matrix,
+  timeline), dark/light theme, responsive layout, toasts, loading/empty/
+  error states.
+* Broker changes: advertised HTTP address in cluster metadata,
+  `/v1/state`, consumed-records and produce-error counters, HTTP started
+  before registration (requests wait for init).
+* DLQ: demo consumers dead-letter failing records to `<topic>.dlq`; retry
+  state persisted in `__dlq_retries`.
+
+What was run:
+* `go test -race ./...` including new `internal/dashboard` tests: snapshot
+  diff unit tests, an end-to-end API test against a real 3-broker
+  in-process cluster, and 3 regression tests (below). Each regression test
+  was checked to fail on the old code.
+* UI: `npm run typecheck` and `npm run build` via the offline package
+  store; **the typecheck used local React type shims because
+  `@types/react` is not available offline — a typecheck against the real
+  React types has not been run here.**
+* Managed mode with 3 real broker processes, exercised through the API and
+  through a real browser (Playwright + Chromium): every page screenshotted
+  in dark, light and mobile widths with no console errors; clicked Kill on
+  a broker and captured the incident (broker unavailable → leader failure
+  → election → ISR shrink → rebalance), clicked Restart and captured
+  recovery and, ~30 s later, leadership moving back; DLQ Retry clicked in
+  the UI (entry marked retried, re-failed message shows 1/3).
+* Docker: dashboard container attached to 3 broker containers
+  (`docker compose up --no-build` with a locally built scratch image, as
+  Docker Hub is blocked here): `docker compose kill broker2` → dashboard
+  showed fenced/leader lost/elected/ISR shrink; after `start`, all ISRs 3.
+
+Bugs found while verifying (all fixed):
+1. A crashed demo consumer kept reporting "running" (the dying loop
+   overwrote the terminal state). Regression test added.
+2. If writing to the DLQ failed, the demo consumer still committed past the
+   record, so it was neither processed nor dead-lettered (lost). It now
+   rewinds and retries the record.
+3. During a coordinator failover a group vanished from the snapshot, so
+   "messages consumed" dropped to 0 and jumped back, drawing a fake
+   throughput spike. The last known view is now carried forward (flagged
+   stale) for up to 30 s. Regression test: consumed total never decreases.
+4. DLQ "already retried" state lived only in memory; a dashboard restart
+   allowed retrying the same entry again. Now persisted in
+   `__dlq_retries`. Regression test with a second, fresh dashboard.
+5. Live stream labelled ~25 % of traffic-generator records "committed to
+   ISR" instead of their ack, because the consumer saw them before the
+   producer callback ran; it now waits (one shared 300 ms budget per
+   fetched batch) for the ack.
+6. UI: chart time axis showed mm:ss (read as a clock time), the DLQ table
+   overflowed and hid the Retry button, a broker name wrapped, a dropdown
+   truncated. Fixed and re-screenshotted.
+7. Docs/UI wording: preferred-leader moves are now shown as step 5
+   (reassignment), not as a failover election.
+
+Not supported by the backend (shown honestly in the UI, listed in
+docs/DASHBOARD.md): built-in DLQ, message IDs/headers, ack status for
+records not produced through the dashboard, broker failure buttons outside
+managed mode, crashing consumers not run by the dashboard, network
+partition simulation, replica reassignment.
 

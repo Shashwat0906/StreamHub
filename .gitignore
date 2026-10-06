@@ -4,3 +4,5 @@ data/
 *.out
 /streamhub
 cluster-data/
+web/node_modules/
+dashboard-data/

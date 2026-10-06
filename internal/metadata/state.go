@@ -25,9 +25,10 @@ const NoLeader int32 = -1
 
 // BrokerMeta is a registered broker.
 type BrokerMeta struct {
-	ID     int32  `json:"id"`
-	Addr   string `json:"addr"`
-	Fenced bool   `json:"fenced"`
+	ID       int32  `json:"id"`
+	Addr     string `json:"addr"`
+	HTTPAddr string `json:"http_addr,omitempty"`
+	Fenced   bool   `json:"fenced"`
 }
 
 // PartitionMeta is the replicated state of one partition.
@@ -106,6 +107,7 @@ type Command struct {
 
 	BrokerID int32  `json:"broker_id,omitempty"`
 	Addr     string `json:"addr,omitempty"`
+	HTTPAddr string `json:"http_addr,omitempty"`
 
 	Topic       string            `json:"topic,omitempty"`
 	Assignments [][]int32         `json:"assignments,omitempty"` // replicas per partition
@@ -212,6 +214,7 @@ func (s *Store) applyLocked(c Command) Result {
 			st.Brokers[c.BrokerID] = b
 		}
 		b.Addr = c.Addr
+		b.HTTPAddr = c.HTTPAddr
 		b.Fenced = false
 		// A broker coming back may restore offline partitions: if it is in
 		// the ISR of a leaderless partition it was the last in-sync
