@@ -332,10 +332,16 @@ What was run:
   diff unit tests, an end-to-end API test against a real 3-broker
   in-process cluster, and 3 regression tests (below). Each regression test
   was checked to fail on the old code.
-* UI: `npm run typecheck` and `npm run build` via the offline package
-  store; **the typecheck used local React type shims because
-  `@types/react` is not available offline — a typecheck against the real
-  React types has not been run here.**
+* UI (first pass): `npm run typecheck` and `npm run build` via the
+  offline package store, typecheck against local React type shims.
+* UI (after npm registry access was granted): real `npm install` (80
+  packages, 0 vulnerabilities reported); `npm run typecheck` against the
+  real `@types/react` 19.3.0 / TypeScript 5.9.3 → exit 0 with no errors; a
+  planted type error was caught (TS2322, exit 2), proving the check is live;
+  `npm run build` with the npm toolchain (React 19.3.0, esbuild 0.25.12)
+  → this bundle is now the committed one, and `package-lock.json` is
+  committed (CI uses `npm ci`). Re-checked in Chromium: all 9 routes, dark
+  and light, no console errors.
 * Managed mode with 3 real broker processes, exercised through the API and
   through a real browser (Playwright + Chromium): every page screenshotted
   in dark, light and mobile widths with no console errors; clicked Kill on

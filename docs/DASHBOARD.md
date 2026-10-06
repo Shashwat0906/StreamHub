@@ -156,20 +156,30 @@ The incident tracker lights up as the cluster reacts to a failure:
 
 ```bash
 cd web
-npm install          # normal environments
-npm run typecheck    # tsc --noEmit
+npm ci               # exact versions from package-lock.json
+npm run typecheck    # tsc --noEmit against the real React types
 npm run build        # esbuild + Tailwind v4 → ../internal/dashboard/ui/dist
 ```
 
+The compiled app is committed (it is embedded with `go:embed`), so rebuild
+and commit `internal/dashboard/ui/dist` after changing anything in `web/`.
+
 The build uses esbuild and Tailwind's JS API directly (`web/build.mjs`)
-instead of Vite, and d3 instead of a React chart library, because this
-project was developed in an environment without access to the npm
-registry, using a pre-installed package store
-(`STREAMHUB_NODE_MODULES`, default `/opt/npm-tools/node_modules`). That
-store has no `@types/react`, so `typecheck` there runs against minimal
-React type shims (`web/src/shims`, `tsconfig.offline.json`). **A typecheck
-against the real `@types/react` (what `npm install` gives you) has not been
-run** and may report issues the shims do not catch.
+instead of Vite, and d3 for charts. That choice dates from development in
+an environment without npm registry access. `build.mjs`/`typecheck.mjs`
+still fall back to a pre-installed package store (`STREAMHUB_NODE_MODULES`,
+default `/opt/npm-tools/node_modules`) and, when `@types/react` is missing
+there, to minimal React type shims (`web/src/shims`,
+`tsconfig.offline.json`). With `npm ci` the real packages and types are
+used.
+
+**Verified:** `npm install` (80 packages, 0 vulnerabilities reported),
+`npm run typecheck` against the real `@types/react` 19.3.0 with TypeScript
+5.9.3 exits 0, and a deliberately planted type error
+(`<div onClick={42} />`) was reported as TS2322, so the check is effective.
+`npm run build` produced the committed bundle (React 19.3.0, esbuild
+0.25.12), which loaded on all 9 routes in dark and light themes in Chromium
+with no console errors.
 
 ## Tests
 
